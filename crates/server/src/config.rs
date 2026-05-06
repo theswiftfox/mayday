@@ -67,6 +67,9 @@ pub struct CalendarConfig {
     pub ms_refresh_token: Option<String>,
     /// EWS endpoint URL (defaults to Exchange Online)
     pub ews_url: Option<String>,
+    /// OAuth redirect URI (defaults to http://localhost:{port}/api/calendar/auth/callback)
+    /// Set to "urn:ietf:wg:oauth:2.0:oob" for out-of-band flow (manual code entry)
+    pub ms_redirect_uri: Option<String>,
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
 }

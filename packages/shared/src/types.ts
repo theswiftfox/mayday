@@ -106,6 +106,7 @@ export interface OutlookConfig extends IntegrationConfig {
   source: 'outlook';
   clientId: string; // Azure AD app client ID
   tenantId?: string; // optional, defaults to 'common'
+  redirectUri?: string; // optional, defaults to localhost callback; use 'urn:ietf:wg:oauth:2.0:oob' for manual code entry
   refreshToken?: string; // stored after OAuth flow
 }
 

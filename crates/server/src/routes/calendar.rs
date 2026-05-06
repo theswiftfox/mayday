@@ -17,6 +17,7 @@ pub fn router() -> Router<AppState> {
         .route("/events", get(list_events))
         .route("/auth/start", post(start_auth))
         .route("/auth/callback", get(auth_callback))
+        .route("/auth/code", post(submit_auth_code))
         .route("/auth/status", get(auth_status))
 }
 
@@ -58,6 +59,7 @@ async fn start_auth(
                 ms_tenant_id: None,
                 ms_refresh_token: None,
                 ews_url: None,
+                ms_redirect_uri: None,
                 poll_interval_secs: 300,
             });
         } else if let Some(cal) = config.calendar.as_mut() {
@@ -82,9 +84,12 @@ async fn start_auth(
     let auth_url =
         services::calendar::build_auth_url(calendar_config, &redirect_base, &code_verifier);
 
+    let use_oob = services::calendar::is_oob_redirect(calendar_config);
+
     Ok(Json(json!({
         "auth_url": auth_url,
         "source": source,
+        "use_oob": use_oob,
     })))
 }
 
@@ -179,6 +184,68 @@ h1 { color: #4ecca3; font-size: 1.5rem; } p { color: #a0a0a0; }</style></head>
 <body><div class="card"><h1>Calendar Connected</h1><p>Microsoft 365 calendar is now connected to myday.</p><p>You can close this tab.</p></div></body></html>"#;
 
     Ok(Html(html.to_string()))
+}
+
+#[derive(Debug, Deserialize)]
+struct SubmitCodeBody {
+    code: String,
+}
+
+/// Manual code submission for OOB redirect flow
+async fn submit_auth_code(
+    State(state): State<AppState>,
+    Json(body): Json<SubmitCodeBody>,
+) -> AppResult<Json<Value>> {
+    // Retrieve the stored PKCE verifier
+    let code_verifier = {
+        let verifier = state.pkce_verifier.read().await;
+        verifier.clone().ok_or_else(|| {
+            AppError::ExternalApi(
+                "No PKCE verifier found. Please restart the auth flow.".to_string(),
+            )
+        })?
+    };
+
+    let config = state.config.read().await;
+    let calendar_config = config
+        .calendar
+        .as_ref()
+        .ok_or_else(|| AppError::NotConfigured("calendar".to_string()))?;
+
+    let port = std::env::var("MYDAY_PORT").unwrap_or_else(|_| "3001".to_string());
+    let redirect_base = format!("http://localhost:{}", port);
+
+    let token_resp = services::calendar::exchange_auth_code(
+        &state.http_client,
+        calendar_config,
+        &body.code,
+        &redirect_base,
+        &code_verifier,
+    )
+    .await?;
+
+    drop(config);
+
+    // Clear the stored PKCE verifier
+    {
+        let mut verifier = state.pkce_verifier.write().await;
+        *verifier = None;
+    }
+
+    // Save the refresh token
+    {
+        let mut config = state.config.write().await;
+        if let Some(cal) = config.calendar.as_mut() {
+            cal.ms_refresh_token = token_resp.refresh_token;
+        }
+    }
+
+    state
+        .save_config()
+        .await
+        .map_err(crate::error::AppError::Internal)?;
+
+    Ok(Json(json!({ "connected": true })))
 }
 
 /// Returns whether the Microsoft auth is complete (for frontend polling)

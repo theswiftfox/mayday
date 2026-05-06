@@ -218,6 +218,25 @@ fn pkce_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(digest)
 }
 
+/// Resolve the effective redirect URI from config or fall back to localhost callback
+pub fn effective_redirect_uri(config: &CalendarConfig, redirect_base: &str) -> String {
+    config
+        .ms_redirect_uri
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("{}{}", redirect_base, REDIRECT_PATH))
+}
+
+/// Returns true if the configured redirect URI is the OOB URN (manual code entry)
+pub fn is_oob_redirect(config: &CalendarConfig) -> bool {
+    config
+        .ms_redirect_uri
+        .as_deref()
+        .map(|s| s == "urn:ietf:wg:oauth:2.0:oob")
+        .unwrap_or(false)
+}
+
 /// Build the Microsoft authorization URL for the browser redirect (with PKCE)
 pub fn build_auth_url(config: &CalendarConfig, redirect_base: &str, code_verifier: &str) -> String {
     let client_id = config
@@ -227,7 +246,7 @@ pub fn build_auth_url(config: &CalendarConfig, redirect_base: &str, code_verifie
         .unwrap_or(DEFAULT_MS_CLIENT_ID);
 
     let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
-    let redirect_uri = format!("{}{}", redirect_base, REDIRECT_PATH);
+    let redirect_uri = effective_redirect_uri(config, redirect_base);
     let code_challenge = pkce_challenge(code_verifier);
     let scope = scopes_for_source(&config.source);
 
@@ -258,7 +277,7 @@ pub async fn exchange_auth_code(
         .unwrap_or(DEFAULT_MS_CLIENT_ID);
 
     let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
-    let redirect_uri = format!("{}{}", redirect_base, REDIRECT_PATH);
+    let redirect_uri = effective_redirect_uri(config, redirect_base);
     let url = format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
         tenant

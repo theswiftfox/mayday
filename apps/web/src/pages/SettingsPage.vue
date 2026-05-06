@@ -24,7 +24,7 @@ const config = ref({
   github: { token: '', username: '', repos: '', poll_interval: 300, oauth_client_id: '' },
   jira: { host: '', email: '', api_token: '', project_keys: '', poll_interval: 300 },
   gitlab: { host: '', token: '', username: '', project_ids: '', poll_interval: 300 },
-  calendar: { source: 'ics', ics_url: '', ms_client_id: '', ms_tenant_id: '', poll_interval: 300 },
+  calendar: { source: 'ics', ics_url: '', ms_client_id: '', ms_tenant_id: '', ms_redirect_uri: '', poll_interval: 300 },
   general: { theme: 'system', refresh_on_focus: true },
 })
 
@@ -61,6 +61,7 @@ onMounted(async () => {
         config.value.calendar.ics_url = data.calendar.ics_url || ''
         config.value.calendar.ms_client_id = data.calendar.ms_client_id || ''
         config.value.calendar.ms_tenant_id = data.calendar.ms_tenant_id || ''
+        config.value.calendar.ms_redirect_uri = data.calendar.ms_redirect_uri || ''
         config.value.calendar.poll_interval = data.calendar.poll_interval_secs || 300
         if (data.calendar.has_ms_refresh_token) {
           calAuthStatus.value = 'authenticated'
@@ -449,6 +450,13 @@ watch(() => config.value.general.theme, (newTheme) => {
               <input v-model="config.calendar.ms_tenant_id" type="text" placeholder="common" class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
               <span class="text-xs text-[var(--color-text-muted)] mt-1 block">
                 Leave blank for multi-tenant ("common"). Set to your org's tenant ID if required.
+              </span>
+            </label>
+            <label class="block">
+              <span class="text-sm text-[var(--color-text-muted)]">Redirect URI (optional)</span>
+              <input v-model="config.calendar.ms_redirect_uri" type="text" placeholder="http://localhost:3001/api/calendar/auth/callback" class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
+              <span class="text-xs text-[var(--color-text-muted)] mt-1 block">
+                Leave blank for default localhost callback. Set to "urn:ietf:wg:oauth:2.0:oob" for manual code entry.
               </span>
             </label>
           </template>
