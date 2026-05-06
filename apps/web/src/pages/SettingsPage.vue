@@ -126,6 +126,32 @@ async function detectGhCli() {
   }
 }
 
+async function useManualToken() {
+  const token = config.value.github.token
+  if (!token) {
+    error.value = 'Please enter a token first'
+    return
+  }
+  ghAuthStatus.value = 'detecting'
+  error.value = ''
+  try {
+    const result = await api.useManualGitHubToken(token)
+    if (result.success) {
+      ghAuthStatus.value = 'authenticated'
+      ghAuthUsername.value = result.username || ''
+      ghAuthSource.value = 'manual'
+      config.value.github.username = result.username || ''
+      success.value = `GitHub connected as ${result.username}`
+    } else {
+      ghAuthStatus.value = 'none'
+      error.value = result.message || 'Token validation failed'
+    }
+  } catch (e: any) {
+    ghAuthStatus.value = 'none'
+    error.value = e.message || 'Failed to validate token'
+  }
+}
+
 async function startDeviceCodeFlow() {
   const clientId = config.value.github.oauth_client_id
   if (!clientId) {
@@ -401,23 +427,36 @@ watch(() => config.value.general.theme, (newTheme) => {
         </div>
 
         <!-- Auth buttons -->
-        <div v-if="ghAuthStatus !== 'authenticated'" class="mb-4 flex flex-wrap gap-3">
-          <button
-            type="button"
-            @click="detectGhCli"
-            :disabled="ghAuthStatus === 'detecting'"
-            class="px-4 py-2 rounded bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text)] text-sm hover:bg-[var(--color-border)] disabled:opacity-50"
-          >
-            {{ ghAuthStatus === 'detecting' ? 'Detecting...' : 'Use gh CLI token' }}
-          </button>
-          <button
-            type="button"
-            @click="startDeviceCodeFlow"
-            :disabled="ghAuthStatus === 'device_code_pending'"
-            class="px-4 py-2 rounded bg-[var(--color-primary)] text-white text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
-          >
-            Login with GitHub (Device Code)
-          </button>
+        <div v-if="ghAuthStatus !== 'authenticated'" class="mb-4 space-y-3">
+          <div class="flex flex-wrap gap-3">
+            <button
+              type="button"
+              @click="detectGhCli"
+              :disabled="ghAuthStatus === 'detecting'"
+              class="px-4 py-2 rounded bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text)] text-sm hover:bg-[var(--color-border)] disabled:opacity-50"
+            >
+              {{ ghAuthStatus === 'detecting' ? 'Detecting...' : 'Use gh CLI token' }}
+            </button>
+            <button
+              type="button"
+              @click="startDeviceCodeFlow"
+              :disabled="ghAuthStatus === 'device_code_pending'"
+              class="px-4 py-2 rounded bg-[var(--color-primary)] text-white text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+            >
+              Login with GitHub (Device Code)
+            </button>
+          </div>
+          <div class="flex gap-2 items-center">
+            <input v-model="config.github.token" type="password" placeholder="ghp_... or gho_..." class="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2 text-sm" />
+            <button
+              type="button"
+              @click="useManualToken"
+              :disabled="ghAuthStatus === 'detecting' || !config.github.token"
+              class="px-4 py-2 rounded bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text)] text-sm hover:bg-[var(--color-border)] disabled:opacity-50 whitespace-nowrap"
+            >
+              Use Token
+            </button>
+          </div>
         </div>
 
         <div class="grid gap-4">
@@ -425,10 +464,6 @@ watch(() => config.value.general.theme, (newTheme) => {
             <span class="text-sm text-[var(--color-text-muted)]">OAuth App Client ID (for device code flow)</span>
             <input v-model="config.github.oauth_client_id" type="text" placeholder="Ov23li..." class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
             <span class="text-xs text-[var(--color-text-muted)]">Create one at github.com/settings/developers</span>
-          </label>
-          <label class="block">
-            <span class="text-sm text-[var(--color-text-muted)]">Token (manual entry, alternative to OAuth)</span>
-            <input v-model="config.github.token" type="password" placeholder="ghp_..." class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
           </label>
           <label class="block">
             <span class="text-sm text-[var(--color-text-muted)]">Username</span>

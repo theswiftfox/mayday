@@ -52,6 +52,13 @@ class ApiClient {
     )
   }
 
+  async useManualGitHubToken(token: string) {
+    return this.request<{ success: boolean; username?: string; message?: string; source?: string }>(
+      '/github/auth/token',
+      { method: 'POST', body: JSON.stringify({ token }) }
+    )
+  }
+
   async startGitHubDeviceCode(clientId: string) {
     return this.request<{
       device_code: string
