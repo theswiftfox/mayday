@@ -11,6 +11,8 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// PKCE code_verifier stored between auth start and callback
     pub pkce_verifier: Arc<RwLock<Option<String>>>,
+    /// Device code stored between device-code/start and device-code/poll
+    pub device_code: Arc<RwLock<Option<String>>>,
 }
 
 impl AppState {
@@ -25,6 +27,7 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
             http_client,
             pkce_verifier: Arc::new(RwLock::new(None)),
+            device_code: Arc::new(RwLock::new(None)),
         })
     }
 

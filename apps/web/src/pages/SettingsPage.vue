@@ -17,14 +17,16 @@ const ghDeviceCode = ref<{ user_code: string; verification_uri: string; device_c
 let ghPollInterval: ReturnType<typeof setInterval> | null = null
 
 // Calendar auth state
-const calAuthStatus = ref<'none' | 'pending' | 'authenticated'>('none')
+const calAuthStatus = ref<'none' | 'pending' | 'device_code_pending' | 'paste_code_pending' | 'authenticated'>('none')
 let calPollInterval: ReturnType<typeof setInterval> | null = null
+const calDeviceCode = ref<{ user_code: string; verification_uri: string } | null>(null)
+const calManualCode = ref('')
 
 const config = ref({
   github: { token: '', username: '', repos: '', poll_interval: 300, oauth_client_id: '' },
   jira: { host: '', email: '', api_token: '', project_keys: '', poll_interval: 300 },
   gitlab: { host: '', token: '', username: '', project_ids: '', poll_interval: 300 },
-  calendar: { source: 'ics', ics_url: '', ms_client_id: '', ms_tenant_id: '', poll_interval: 300 },
+  calendar: { source: 'ics', ics_url: '', ms_client_id: '', ms_tenant_id: '', ms_redirect_uri: '', poll_interval: 300 },
   general: { theme: 'system', refresh_on_focus: true },
 })
 
@@ -61,6 +63,7 @@ onMounted(async () => {
         config.value.calendar.ics_url = data.calendar.ics_url || ''
         config.value.calendar.ms_client_id = data.calendar.ms_client_id || ''
         config.value.calendar.ms_tenant_id = data.calendar.ms_tenant_id || ''
+        config.value.calendar.ms_redirect_uri = data.calendar.ms_redirect_uri || ''
         config.value.calendar.poll_interval = data.calendar.poll_interval_secs || 300
         if (data.calendar.has_ms_refresh_token) {
           calAuthStatus.value = 'authenticated'
@@ -141,7 +144,7 @@ async function startDeviceCodeFlow() {
     ghAuthStatus.value = 'device_code_pending'
 
     // Open verification URL in browser
-    window.open(result.verification_uri, '_blank')
+    openExternal(result.verification_uri)
 
     // Start polling
     ghPollInterval = setInterval(async () => {
@@ -168,11 +171,17 @@ async function startDeviceCodeFlow() {
 
 // --- Calendar Auth Methods ---
 
+function openExternal(url: string) {
+  const tauri = (window as any).__TAURI_INTERNALS__
+  if (tauri) {
+    tauri.invoke('plugin:shell|open', { path: url, with: undefined })
+  } else {
+    window.open(url, '_blank')
+  }
+}
+
 async function startCalendarAuth() {
   error.value = ''
-
-  // Open the window immediately (within user gesture) to avoid popup blocker
-  const authWindow = window.open('about:blank', '_blank', 'width=600,height=700')
 
   try {
     // Save the current calendar config first (so client_id/tenant_id are persisted)
@@ -180,14 +189,8 @@ async function startCalendarAuth() {
 
     const result = await api.startCalendarAuth(config.value.calendar.source)
 
-    // Navigate the already-opened window to the auth URL
-    if (authWindow) {
-      authWindow.location.href = result.auth_url
-    } else {
-      // Fallback: if popup was still blocked, show the URL
-      error.value = 'Popup blocked. Please allow popups or open this URL manually: ' + result.auth_url
-      return
-    }
+    // Open the auth URL in the system browser
+    openExternal(result.auth_url)
 
     calAuthStatus.value = 'pending'
 
@@ -214,8 +217,126 @@ async function startCalendarAuth() {
       }
     }, 300000)
   } catch (e: any) {
-    if (authWindow) authWindow.close()
     error.value = e.message || 'Failed to start calendar auth'
+  }
+}
+
+async function startCalendarDeviceCode() {
+  error.value = ''
+
+  try {
+    // Save the current calendar config first (so client_id/tenant_id are persisted)
+    await api.updateConfig(config.value)
+
+    const result = await api.startCalendarDeviceCode(config.value.calendar.source)
+    calDeviceCode.value = {
+      user_code: result.user_code,
+      verification_uri: result.verification_uri,
+    }
+    calAuthStatus.value = 'device_code_pending'
+
+    // Open the verification URL
+    openExternal(result.verification_uri)
+
+    // Poll for completion
+    const interval = (result.interval || 5) * 1000
+    calPollInterval = setInterval(async () => {
+      try {
+        const pollResult = await api.pollCalendarDeviceCode()
+        if (pollResult.status === 'completed') {
+          calAuthStatus.value = 'authenticated'
+          calDeviceCode.value = null
+          success.value = 'Microsoft 365 calendar connected'
+          if (calPollInterval) clearInterval(calPollInterval)
+        } else if (pollResult.status === 'expired' || pollResult.status === 'error') {
+          calAuthStatus.value = 'none'
+          calDeviceCode.value = null
+          error.value = pollResult.error || 'Device code flow failed'
+          if (calPollInterval) clearInterval(calPollInterval)
+        }
+      } catch {
+        // Ignore transient poll errors, keep trying
+      }
+    }, interval)
+
+    // Stop polling after 15 minutes (device codes typically expire in 15min)
+    setTimeout(() => {
+      if (calPollInterval && calAuthStatus.value === 'device_code_pending') {
+        clearInterval(calPollInterval)
+        calAuthStatus.value = 'none'
+        calDeviceCode.value = null
+        error.value = 'Device code expired. Please try again.'
+      }
+    }, 900000)
+  } catch (e: any) {
+    error.value = e.message || 'Failed to start device code flow'
+  }
+}
+
+async function startCalendarPasteCode() {
+  error.value = ''
+
+  try {
+    // Save the current calendar config first
+    await api.updateConfig(config.value)
+
+    const result = await api.startCalendarAuth(config.value.calendar.source, 'manual')
+
+    const tauri = (window as any).__TAURI_INTERNALS__
+    const isOob = config.value.calendar.ms_redirect_uri === 'urn:ietf:wg:oauth:2.0:oob'
+
+    if (tauri && isOob) {
+      // Use Tauri webview window to intercept OOB redirect automatically
+      await tauri.invoke('open_auth_window', { url: result.auth_url })
+      calAuthStatus.value = 'pending'
+
+      // Poll for auth completion (the webview will exchange the code via the server)
+      calPollInterval = setInterval(async () => {
+        try {
+          const status = await api.getCalendarAuthStatus()
+          if (status.connected) {
+            calAuthStatus.value = 'authenticated'
+            success.value = 'Microsoft 365 calendar connected'
+            if (calPollInterval) clearInterval(calPollInterval)
+          }
+        } catch {
+          // Ignore poll errors, keep trying
+        }
+      }, 2000)
+
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        if (calPollInterval && calAuthStatus.value !== 'authenticated') {
+          clearInterval(calPollInterval)
+          calAuthStatus.value = 'none'
+          error.value = 'Authentication timed out. Please try again.'
+        }
+      }, 300000)
+    } else {
+      // Fallback: open in system browser, show paste code input
+      openExternal(result.auth_url)
+      calAuthStatus.value = 'paste_code_pending'
+      calManualCode.value = ''
+    }
+  } catch (e: any) {
+    error.value = e.message || 'Failed to start auth flow'
+  }
+}
+
+async function submitManualCode() {
+  if (!calManualCode.value.trim()) {
+    error.value = 'Please paste the authorization code or the full redirect URL'
+    return
+  }
+
+  error.value = ''
+  try {
+    await api.exchangeCalendarCode(calManualCode.value.trim())
+    calAuthStatus.value = 'authenticated'
+    calManualCode.value = ''
+    success.value = 'Microsoft 365 calendar connected'
+  } catch (e: any) {
+    error.value = e.message || 'Failed to exchange code'
   }
 }
 
@@ -413,10 +534,43 @@ watch(() => config.value.general.theme, (newTheme) => {
               </p>
             </div>
 
-            <!-- Waiting for auth -->
+            <!-- Waiting for redirect auth -->
             <div v-if="calAuthStatus === 'pending'" class="p-4 bg-blue-500/10 rounded border border-blue-500/30">
               <p class="text-sm text-[var(--color-text)]">A sign-in window has opened.</p>
               <p class="text-xs text-[var(--color-text-muted)] mt-1">Complete the sign-in in the browser window, then this page will update automatically.</p>
+            </div>
+
+            <!-- Device code pending -->
+            <div v-if="calAuthStatus === 'device_code_pending' && calDeviceCode" class="p-4 bg-blue-500/10 rounded border border-blue-500/30">
+              <p class="text-sm text-[var(--color-text)]">
+                Go to <a :href="calDeviceCode.verification_uri" target="_blank" class="text-[var(--color-primary)] font-semibold underline">{{ calDeviceCode.verification_uri }}</a> and enter:
+              </p>
+              <p class="text-2xl font-mono font-bold text-[var(--color-text)] mt-2 tracking-widest">{{ calDeviceCode.user_code }}</p>
+              <p class="text-xs text-[var(--color-text-muted)] mt-2">Waiting for sign-in to complete...</p>
+            </div>
+
+            <!-- Paste code pending -->
+            <div v-if="calAuthStatus === 'paste_code_pending'" class="p-4 bg-blue-500/10 rounded border border-blue-500/30">
+              <p class="text-sm text-[var(--color-text)] mb-2">Sign in completed? Paste the code or the full URL from the browser address bar:</p>
+              <div class="flex gap-2">
+                <input
+                  v-model="calManualCode"
+                  type="text"
+                  placeholder="Paste code or URL here..."
+                  class="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2 text-sm font-mono"
+                  @keyup.enter="submitManualCode"
+                />
+                <button
+                  type="button"
+                  @click="submitManualCode"
+                  class="px-4 py-2 rounded bg-[var(--color-primary)] text-white text-sm hover:bg-[var(--color-primary-hover)]"
+                >
+                  Submit
+                </button>
+              </div>
+              <p class="text-xs text-[var(--color-text-muted)] mt-2">
+                After signing in, you'll be redirected to a blank page. Copy the full URL from the address bar (it contains the code).
+              </p>
             </div>
 
             <!-- EWS info -->
@@ -427,16 +581,33 @@ watch(() => config.value.general.theme, (newTheme) => {
               </p>
             </div>
 
-            <!-- Connect button -->
-            <button
-              v-if="calAuthStatus !== 'authenticated'"
-              type="button"
-              @click="startCalendarAuth"
-              :disabled="calAuthStatus === 'pending'"
-              class="px-4 py-2 rounded bg-[var(--color-primary)] text-white text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 w-fit"
-            >
-              {{ calAuthStatus === 'pending' ? 'Waiting for sign-in...' : 'Connect Microsoft 365' }}
-            </button>
+            <!-- Connect buttons -->
+            <div v-if="calAuthStatus !== 'authenticated' && calAuthStatus !== 'paste_code_pending'" class="flex gap-3 flex-wrap">
+              <button
+                type="button"
+                @click="startCalendarAuth"
+                :disabled="calAuthStatus === 'pending' || calAuthStatus === 'device_code_pending'"
+                class="px-4 py-2 rounded bg-[var(--color-primary)] text-white text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+              >
+                {{ calAuthStatus === 'pending' ? 'Waiting...' : 'Connect (Browser Redirect)' }}
+              </button>
+              <button
+                type="button"
+                @click="startCalendarPasteCode"
+                :disabled="calAuthStatus === 'pending' || calAuthStatus === 'device_code_pending'"
+                class="px-4 py-2 rounded border border-[var(--color-primary)] text-[var(--color-primary)] text-sm hover:bg-[var(--color-primary)]/10 disabled:opacity-50"
+              >
+                Connect (Paste Code)
+              </button>
+              <button
+                type="button"
+                @click="startCalendarDeviceCode"
+                :disabled="calAuthStatus === 'pending' || calAuthStatus === 'device_code_pending'"
+                class="px-4 py-2 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] text-sm hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
+              >
+                {{ calAuthStatus === 'device_code_pending' ? 'Waiting...' : 'Connect (Device Code)' }}
+              </button>
+            </div>
 
             <label class="block">
               <span class="text-sm text-[var(--color-text-muted)]">Client ID (optional — leave blank to use default)</span>
@@ -450,6 +621,14 @@ watch(() => config.value.general.theme, (newTheme) => {
               <input v-model="config.calendar.ms_tenant_id" type="text" placeholder="common" class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
               <span class="text-xs text-[var(--color-text-muted)] mt-1 block">
                 Leave blank for multi-tenant ("common"). Set to your org's tenant ID if required.
+              </span>
+            </label>
+            <label class="block">
+              <span class="text-sm text-[var(--color-text-muted)]">Redirect URI (optional)</span>
+              <input v-model="config.calendar.ms_redirect_uri" type="text" placeholder="Default: https://login.microsoftonline.com/common/oauth2/nativeclient" class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
+              <span class="text-xs text-[var(--color-text-muted)] mt-1 block">
+                Used by "Paste Code" flow. Default shows a blank page with the code in the URL bar.
+                Do NOT use urn:ietf:wg:oauth:2.0:oob (browsers can't open it).
               </span>
             </label>
           </template>

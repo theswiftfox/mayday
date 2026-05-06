@@ -47,6 +47,7 @@ async fn get_config(State(state): State<AppState>) -> AppResult<Json<Value>> {
             "ics_url": c.ics_url,
             "ms_client_id": c.ms_client_id,
             "ms_tenant_id": c.ms_tenant_id,
+            "ms_redirect_uri": c.ms_redirect_uri,
             "has_ms_refresh_token": c.ms_refresh_token.is_some(),
             "poll_interval_secs": c.poll_interval_secs,
         })),
@@ -118,6 +119,8 @@ struct CalendarFormData {
     ms_client_id: String,
     #[serde(default)]
     ms_tenant_id: String,
+    #[serde(default)]
+    ms_redirect_uri: String,
     #[serde(default = "default_poll")]
     poll_interval: u64,
 }
@@ -266,6 +269,11 @@ async fn update_config(
                 },
                 ms_refresh_token: existing_refresh,
                 ews_url: None,
+                ms_redirect_uri: if cal.ms_redirect_uri.is_empty() {
+                    None
+                } else {
+                    Some(cal.ms_redirect_uri)
+                },
                 poll_interval_secs: cal.poll_interval,
             });
         }
