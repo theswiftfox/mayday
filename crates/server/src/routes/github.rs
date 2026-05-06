@@ -15,6 +15,7 @@ pub fn router() -> Router<AppState> {
         .route("/prs", get(list_prs))
         .route("/prs/{owner}/{repo}/{number}", get(get_pr_detail))
         .route("/auth/detect-gh-cli", post(detect_gh_cli))
+        .route("/auth/token", post(use_manual_token))
         .route("/auth/device-code/start", post(start_device_code))
         .route("/auth/device-code/poll", post(poll_device_code))
 }
@@ -91,6 +92,49 @@ async fn detect_gh_cli(State(state): State<AppState>) -> AppResult<Json<Value>> 
             "message": "gh CLI not found or not authenticated. Run `gh auth login` first, or use the device code flow.",
         }))),
     }
+}
+
+#[derive(Deserialize)]
+struct ManualTokenRequest {
+    token: String,
+}
+
+/// Validate and save a manually-provided GitHub token
+async fn use_manual_token(
+    State(state): State<AppState>,
+    Json(body): Json<ManualTokenRequest>,
+) -> AppResult<Json<Value>> {
+    let token = body.token.trim().to_string();
+    if token.is_empty() {
+        return Ok(Json(json!({
+            "success": false,
+            "message": "Token cannot be empty.",
+        })));
+    }
+
+    let username = services::github::fetch_authenticated_user(&state.http_client, &token).await?;
+
+    {
+        let mut config = state.config.write().await;
+        let gh_config = config.github.get_or_insert(crate::config::GitHubConfig {
+            token: String::new(),
+            username: String::new(),
+            repos: vec![],
+            poll_interval_secs: 300,
+            oauth_client_id: None,
+            token_source: "manual".to_string(),
+        });
+        gh_config.token = token;
+        gh_config.username = username.clone();
+        gh_config.token_source = "manual".to_string();
+    }
+    state.save_config().await.map_err(crate::error::AppError::Internal)?;
+
+    Ok(Json(json!({
+        "success": true,
+        "username": username,
+        "source": "manual",
+    })))
 }
 
 #[derive(Deserialize)]
