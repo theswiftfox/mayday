@@ -30,6 +30,7 @@ pub async fn fetch_todays_events(
     config: &CalendarConfig,
 ) -> AppResult<Vec<CalendarEvent>> {
     match config.source.as_str() {
+        "none" => Ok(vec![]),
         "microsoft" => fetch_todays_events_microsoft(client, config).await,
         "ews" => fetch_todays_events_ews(client, config).await,
         _ => fetch_todays_events_ics(client, config).await,

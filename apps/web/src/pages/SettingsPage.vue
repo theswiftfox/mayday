@@ -385,6 +385,7 @@ watch(() => config.value.general.theme, (newTheme) => {
           <label class="block">
             <span class="text-sm text-[var(--color-text-muted)]">Source</span>
             <select v-model="config.calendar.source" class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2">
+              <option value="none">Disabled</option>
               <option value="ics">ICS Feed URL</option>
               <option value="microsoft">Microsoft 365 (Graph API)</option>
               <option value="ews">Microsoft 365 (EWS)</option>

@@ -12,6 +12,8 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+myday-server = { path = "../../../crates/server" }
 
 [features]
 default = ["custom-protocol"]

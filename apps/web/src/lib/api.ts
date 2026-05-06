@@ -1,4 +1,7 @@
-const API_BASE = '/api'
+// In Tauri, the frontend is served from a custom protocol so we need the full server URL.
+// In dev/web mode, Vite proxies /api to the server.
+const isTauri = !!(window as any).__TAURI_INTERNALS__
+const API_BASE = isTauri ? 'http://localhost:3001/api' : '/api'
 
 class ApiClient {
   private baseUrl: string
