@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.myday.app",
   "build": {
-    "frontendDist": "../../apps/web/dist",
+    "frontendDist": "../../../apps/web/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm --filter @myday/web dev",
     "beforeBuildCommand": "pnpm --filter @myday/web build"
