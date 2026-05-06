@@ -102,15 +102,40 @@ class ApiClient {
     return this.request<{ data: any[] }>('/calendar/events')
   }
 
-  async startCalendarAuth(source?: string) {
-    return this.request<{ auth_url: string; source: string }>('/calendar/auth/start', {
+  async startCalendarAuth(source?: string, flow?: string) {
+    return this.request<{ auth_url: string; source: string; flow: string }>('/calendar/auth/start', {
       method: 'POST',
-      body: JSON.stringify({ source: source || 'ews' }),
+      body: JSON.stringify({ source: source || 'ews', flow: flow || 'redirect' }),
     })
   }
 
   async getCalendarAuthStatus() {
     return this.request<{ connected: boolean }>('/calendar/auth/status')
+  }
+
+  async startCalendarDeviceCode(source?: string) {
+    return this.request<{
+      user_code: string
+      verification_uri: string
+      expires_in: number
+      interval: number
+    }>('/calendar/auth/device-code/start', {
+      method: 'POST',
+      body: JSON.stringify({ source: source || 'ews' }),
+    })
+  }
+
+  async pollCalendarDeviceCode() {
+    return this.request<{ status: string; error?: string }>('/calendar/auth/device-code/poll', {
+      method: 'POST',
+    })
+  }
+
+  async exchangeCalendarCode(code: string, redirectUri?: string) {
+    return this.request<{ status: string }>('/calendar/auth/exchange-code', {
+      method: 'POST',
+      body: JSON.stringify({ code, redirect_uri: redirectUri }),
+    })
   }
 
   // Config

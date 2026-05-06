@@ -154,25 +154,51 @@ async fn get_ms_access_token(client: &Client, config: &CalendarConfig) -> AppRes
         .unwrap_or(DEFAULT_MS_CLIENT_ID);
 
     let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
-    let url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-        tenant
-    );
 
-    let scope = scopes_for_source(&config.source);
+    // Determine if we should use v1.0 endpoints (when OOB redirect was used for auth)
+    let use_v1 = config
+        .ms_redirect_uri
+        .as_deref()
+        .map(|uri| is_v1_flow(uri))
+        .unwrap_or(false);
 
-    let resp = client
-        .post(&url)
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("client_id", client_id),
-            ("refresh_token", refresh_token),
-            ("scope", scope),
-        ])
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("Microsoft OAuth refresh: {}", e)))?;
+    let resp = if use_v1 {
+        let url = format!(
+            "https://login.microsoftonline.com/{}/oauth2/token",
+            tenant
+        );
+        let resource = resource_for_source(&config.source);
+        client
+            .post(&url)
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", client_id),
+                ("refresh_token", refresh_token),
+                ("resource", resource),
+            ])
+            .send()
+            .await?
+            .error_for_status()
+            .map_err(|e| AppError::ExternalApi(format!("Microsoft OAuth v1.0 refresh: {}", e)))?
+    } else {
+        let url = format!(
+            "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
+            tenant
+        );
+        let scope = scopes_for_source(&config.source);
+        client
+            .post(&url)
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", client_id),
+                ("refresh_token", refresh_token),
+                ("scope", scope),
+            ])
+            .send()
+            .await?
+            .error_for_status()
+            .map_err(|e| AppError::ExternalApi(format!("Microsoft OAuth refresh: {}", e)))?
+    };
 
     let body: Value = resp.json().await?;
     let access_token = body["access_token"]
@@ -188,12 +214,27 @@ const REDIRECT_PATH: &str = "/api/calendar/auth/callback";
 const MS_GRAPH_SCOPES: &str = "Calendars.Read offline_access";
 const EWS_SCOPES: &str = "https://outlook.office365.com/EWS.AccessAsUser.All offline_access";
 
-/// Get the appropriate OAuth scope for a given source type
+const OOB_REDIRECT: &str = "urn:ietf:wg:oauth:2.0:oob";
+
+/// Get the appropriate OAuth scope for a given source type (v2.0)
 pub fn scopes_for_source(source: &str) -> &'static str {
     match source {
         "ews" => EWS_SCOPES,
         _ => MS_GRAPH_SCOPES,
     }
+}
+
+/// Get the appropriate resource for a given source type (v1.0)
+fn resource_for_source(source: &str) -> &'static str {
+    match source {
+        "ews" => "https://outlook.office365.com",
+        _ => "https://graph.microsoft.com",
+    }
+}
+
+/// Check if the flow should use v1.0 endpoints (needed for OOB redirect)
+pub fn is_v1_flow(redirect_uri: &str) -> bool {
+    redirect_uri == OOB_REDIRECT
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,7 +261,18 @@ fn pkce_challenge(verifier: &str) -> String {
 }
 
 /// Build the Microsoft authorization URL for the browser redirect (with PKCE)
+/// Always uses localhost callback — ignores ms_redirect_uri (that's for manual flow only)
 pub fn build_auth_url(config: &CalendarConfig, redirect_base: &str, code_verifier: &str) -> String {
+    let redirect_uri = format!("{}{}", redirect_base, REDIRECT_PATH);
+    build_auth_url_with_redirect(config, &redirect_uri, code_verifier)
+}
+
+/// Build the Microsoft authorization URL with a specific redirect URI (with PKCE)
+pub fn build_auth_url_with_redirect(
+    config: &CalendarConfig,
+    redirect_uri: &str,
+    code_verifier: &str,
+) -> String {
     let client_id = config
         .ms_client_id
         .as_deref()
@@ -228,7 +280,6 @@ pub fn build_auth_url(config: &CalendarConfig, redirect_base: &str, code_verifie
         .unwrap_or(DEFAULT_MS_CLIENT_ID);
 
     let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
-    let redirect_uri = format!("{}{}", redirect_base, REDIRECT_PATH);
     let code_challenge = pkce_challenge(code_verifier);
     let scope = scopes_for_source(&config.source);
 
@@ -238,10 +289,91 @@ pub fn build_auth_url(config: &CalendarConfig, redirect_base: &str, code_verifie
          &code_challenge={}&code_challenge_method=S256",
         tenant,
         urlencoding::encode(client_id),
-        urlencoding::encode(&redirect_uri),
+        urlencoding::encode(redirect_uri),
         urlencoding::encode(scope),
         urlencoding::encode(&code_challenge),
     )
+}
+
+/// Build a v1.0 authorization URL (required for urn:ietf:wg:oauth:2.0:oob redirect)
+/// v1.0 shows the auth code on a page in the browser instead of redirecting to the URN.
+pub fn build_auth_url_v1(config: &CalendarConfig, redirect_uri: &str) -> String {
+    let client_id = config
+        .ms_client_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_MS_CLIENT_ID);
+
+    let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
+    let resource = resource_for_source(&config.source);
+
+    format!(
+        "https://login.microsoftonline.com/{}/oauth2/authorize?\
+         client_id={}&response_type=code&redirect_uri={}&resource={}&prompt=consent",
+        tenant,
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(resource),
+    )
+}
+
+/// Exchange an authorization code using v1.0 token endpoint (for OOB redirect flow)
+pub async fn exchange_auth_code_v1(
+    client: &Client,
+    config: &CalendarConfig,
+    code: &str,
+    redirect_uri: &str,
+) -> AppResult<TokenResponse> {
+    let client_id = config
+        .ms_client_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_MS_CLIENT_ID);
+
+    let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
+    let resource = resource_for_source(&config.source);
+    let url = format!(
+        "https://login.microsoftonline.com/{}/oauth2/token",
+        tenant
+    );
+
+    let resp = client
+        .post(&url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+            ("resource", resource),
+        ])
+        .send()
+        .await?;
+
+    let body: Value = resp.json().await?;
+
+    if let Some(error) = body["error"].as_str() {
+        let desc = body["error_description"]
+            .as_str()
+            .unwrap_or("Unknown error");
+        return Err(AppError::ExternalApi(format!(
+            "Microsoft OAuth v1.0 error: {} - {}",
+            error, desc
+        )));
+    }
+
+    let access_token = body["access_token"]
+        .as_str()
+        .ok_or_else(|| AppError::ExternalApi("No access token in response".to_string()))?;
+
+    Ok(TokenResponse {
+        access_token: access_token.to_string(),
+        refresh_token: body["refresh_token"].as_str().map(String::from),
+        expires_in: body["expires_in"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .or_else(|| body["expires_in"].as_u64())
+            .unwrap_or(3600),
+    })
 }
 
 /// Exchange an authorization code for access + refresh tokens (with PKCE)
@@ -259,7 +391,12 @@ pub async fn exchange_auth_code(
         .unwrap_or(DEFAULT_MS_CLIENT_ID);
 
     let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
-    let redirect_uri = format!("{}{}", redirect_base, REDIRECT_PATH);
+    let redirect_uri = config
+        .ms_redirect_uri
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| format!("{}{}", redirect_base, REDIRECT_PATH));
     let url = format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
         tenant
@@ -299,6 +436,165 @@ pub async fn exchange_auth_code(
         access_token: access_token.to_string(),
         refresh_token: body["refresh_token"].as_str().map(String::from),
         expires_in: body["expires_in"].as_u64().unwrap_or(3600),
+    })
+}
+
+// ─── Device Code Flow ────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeviceCodeResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub expires_in: u64,
+    pub interval: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeviceCodePollResult {
+    pub status: String, // "pending", "completed", "expired", "error"
+    pub error: Option<String>,
+    pub token: Option<TokenResponse>,
+}
+
+/// Initiate the device code flow with Microsoft
+pub async fn start_device_code_flow(
+    client: &Client,
+    config: &CalendarConfig,
+) -> AppResult<DeviceCodeResponse> {
+    let client_id = config
+        .ms_client_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_MS_CLIENT_ID);
+
+    let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
+    let scope = scopes_for_source(&config.source);
+
+    let url = format!(
+        "https://login.microsoftonline.com/{}/oauth2/v2.0/devicecode",
+        tenant
+    );
+
+    let resp = client
+        .post(&url)
+        .form(&[("client_id", client_id), ("scope", scope)])
+        .send()
+        .await?;
+
+    let body: Value = resp.json().await?;
+
+    if let Some(error) = body["error"].as_str() {
+        let desc = body["error_description"]
+            .as_str()
+            .unwrap_or("Unknown error");
+        return Err(AppError::ExternalApi(format!(
+            "Device code request failed: {} - {}",
+            error, desc
+        )));
+    }
+
+    let device_code = body["device_code"]
+        .as_str()
+        .ok_or_else(|| AppError::ExternalApi("No device_code in response".to_string()))?
+        .to_string();
+
+    let user_code = body["user_code"]
+        .as_str()
+        .ok_or_else(|| AppError::ExternalApi("No user_code in response".to_string()))?
+        .to_string();
+
+    let verification_uri = body["verification_uri"]
+        .as_str()
+        .unwrap_or("https://microsoft.com/devicelogin")
+        .to_string();
+
+    let expires_in = body["expires_in"].as_u64().unwrap_or(900);
+    let interval = body["interval"].as_u64().unwrap_or(5);
+
+    Ok(DeviceCodeResponse {
+        device_code,
+        user_code,
+        verification_uri,
+        expires_in,
+        interval,
+    })
+}
+
+/// Poll the token endpoint for a pending device code flow
+pub async fn poll_device_code_flow(
+    client: &Client,
+    config: &CalendarConfig,
+    device_code: &str,
+) -> AppResult<DeviceCodePollResult> {
+    let client_id = config
+        .ms_client_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_MS_CLIENT_ID);
+
+    let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
+    let url = format!(
+        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
+        tenant
+    );
+
+    let resp = client
+        .post(&url)
+        .form(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("client_id", client_id),
+            ("device_code", device_code),
+        ])
+        .send()
+        .await?;
+
+    let body: Value = resp.json().await?;
+
+    // Check for errors — "authorization_pending" means user hasn't completed auth yet
+    if let Some(error) = body["error"].as_str() {
+        return match error {
+            "authorization_pending" => Ok(DeviceCodePollResult {
+                status: "pending".to_string(),
+                error: None,
+                token: None,
+            }),
+            "slow_down" => Ok(DeviceCodePollResult {
+                status: "pending".to_string(),
+                error: None,
+                token: None,
+            }),
+            "expired_token" => Ok(DeviceCodePollResult {
+                status: "expired".to_string(),
+                error: Some("Device code expired. Please start again.".to_string()),
+                token: None,
+            }),
+            _ => {
+                let desc = body["error_description"]
+                    .as_str()
+                    .unwrap_or("Unknown error");
+                Ok(DeviceCodePollResult {
+                    status: "error".to_string(),
+                    error: Some(format!("{}: {}", error, desc)),
+                    token: None,
+                })
+            }
+        };
+    }
+
+    // Success — extract tokens
+    let access_token = body["access_token"]
+        .as_str()
+        .ok_or_else(|| AppError::ExternalApi("No access token in response".to_string()))?;
+
+    Ok(DeviceCodePollResult {
+        status: "completed".to_string(),
+        error: None,
+        token: Some(TokenResponse {
+            access_token: access_token.to_string(),
+            refresh_token: body["refresh_token"].as_str().map(String::from),
+            expires_in: body["expires_in"].as_u64().unwrap_or(3600),
+        }),
     })
 }
 
