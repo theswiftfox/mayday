@@ -1,0 +1,17 @@
+{
+  "name": "myday",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "dev:web": "turbo dev --filter=@myday/web",
+    "dev:server": "turbo dev --filter=@myday/server",
+    "dev:desktop": "turbo dev --filter=@myday/desktop"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0"
+  }
+}

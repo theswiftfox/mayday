@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Rust build outputs
+target/
+**/*.rs.bk
+
+# Frontend build outputs
+dist/
+*.tsbuildinfo
+.vite/
+.nuxt/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+.Spotlight-V100
+.Trashes
+
+# Tauri
+apps/desktop/src-tauri/target/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Turbo
+.turbo/
+
+# Testing / Coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# SQLite databases (local dev)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Docker
+.docker/
+
+# Misc
+*.pem
+*.key
+*.cert
+.cache/
+tmp/

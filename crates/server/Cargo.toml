@@ -1,0 +1,31 @@
+[package]
+name = "myday-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "myday-server"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true
+dirs-next = "2"
+futures = "0.3"
+urlencoding = "2"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+quick-xml = "0.37"
