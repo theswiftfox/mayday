@@ -1,6 +1,9 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use anyhow::Result;
+use moka::future::Cache;
+use serde_json::Value;
 
 use crate::config::AppConfig;
 
@@ -13,6 +16,8 @@ pub struct AppState {
     pub pkce_verifier: Arc<RwLock<Option<String>>>,
     /// Device code stored between device-code/start and device-code/poll
     pub device_code: Arc<RwLock<Option<String>>>,
+    /// TTL cache for API responses (avoids repeated external API calls)
+    pub api_cache: Cache<String, Value>,
 }
 
 impl AppState {
@@ -23,11 +28,17 @@ impl AppState {
             .user_agent("myday/0.1.0")
             .build()?;
 
+        let api_cache = Cache::builder()
+            .time_to_live(Duration::from_secs(90))
+            .max_capacity(10)
+            .build();
+
         Ok(Self {
             config: Arc::new(RwLock::new(config)),
             http_client,
             pkce_verifier: Arc::new(RwLock::new(None)),
             device_code: Arc::new(RwLock::new(None)),
+            api_cache,
         })
     }
 

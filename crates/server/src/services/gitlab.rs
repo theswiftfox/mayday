@@ -60,45 +60,48 @@ pub struct GitLabPipeline {
 /// Fetch MRs that need attention
 pub async fn fetch_mrs(client: &Client, config: &GitLabConfig) -> AppResult<Vec<GitLabMR>> {
     let base_url = format!("https://{}/api/v4", sanitize_host(&config.host));
+
+    // Fetch authored and reviewer MRs in parallel
+    let (authored_resp, review_resp) = tokio::join!(
+        client
+            .get(format!("{}/merge_requests", base_url))
+            .query(&[
+                ("state", "opened"),
+                ("scope", "created_by_me"),
+                ("per_page", "50"),
+            ])
+            .header("PRIVATE-TOKEN", &config.token)
+            .send(),
+        client
+            .get(format!("{}/merge_requests", base_url))
+            .query(&[
+                ("state", "opened"),
+                ("scope", "all"),
+                ("reviewer_username", config.username.as_str()),
+                ("per_page", "50"),
+            ])
+            .header("PRIVATE-TOKEN", &config.token)
+            .send(),
+    );
+
     let mut all_mrs = Vec::new();
 
-    // Fetch MRs authored by user
-    let authored_resp = client
-        .get(format!("{}/merge_requests", base_url))
-        .query(&[
-            ("state", "opened"),
-            ("scope", "created_by_me"),
-            ("per_page", "50"),
-        ])
-        .header("PRIVATE-TOKEN", &config.token)
-        .send()
-        .await?
+    let authored: Vec<Value> = authored_resp?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?;
-
-    let authored: Vec<Value> = authored_resp.json().await?;
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
+        .json()
+        .await?;
     for mr in &authored {
         if let Some(parsed) = parse_gitlab_mr(mr, "author", config) {
             all_mrs.push(parsed);
         }
     }
 
-    // Fetch MRs where user is reviewer
-    let review_resp = client
-        .get(format!("{}/merge_requests", base_url))
-        .query(&[
-            ("state", "opened"),
-            ("scope", "all"),
-            ("reviewer_username", config.username.as_str()),
-            ("per_page", "50"),
-        ])
-        .header("PRIVATE-TOKEN", &config.token)
-        .send()
-        .await?
+    let reviewing: Vec<Value> = review_resp?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?;
-
-    let reviewing: Vec<Value> = review_resp.json().await?;
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
+        .json()
+        .await?;
     for mr in &reviewing {
         if let Some(parsed) = parse_gitlab_mr(mr, "reviewer", config) {
             // Avoid duplicates
@@ -117,7 +120,6 @@ pub async fn fetch_pipelines(
     config: &GitLabConfig,
 ) -> AppResult<Vec<GitLabPipeline>> {
     let base_url = format!("https://{}/api/v4", sanitize_host(&config.host));
-    let mut all_pipelines = Vec::new();
 
     // Determine project IDs: use configured list, or derive from user's MRs
     let project_ids = if !config.project_ids.is_empty() {
@@ -127,23 +129,39 @@ pub async fn fetch_pipelines(
         discover_project_ids(client, config).await?
     };
 
-    for project_id in &project_ids {
-        let resp = client
-            .get(format!("{}/projects/{}/pipelines", base_url, project_id))
-            .query(&[("per_page", "10"), ("order_by", "updated_at")])
-            .header("PRIVATE-TOKEN", &config.token)
-            .send()
-            .await?;
+    // Fetch pipelines for ALL projects in parallel
+    let futures: Vec<_> = project_ids
+        .iter()
+        .map(|project_id| {
+            let url = format!("{}/projects/{}/pipelines", base_url, project_id);
+            let token = config.token.clone();
+            let pid = *project_id;
+            async move {
+                let resp = client
+                    .get(&url)
+                    .query(&[("per_page", "10"), ("order_by", "updated_at")])
+                    .header("PRIVATE-TOKEN", &token)
+                    .send()
+                    .await;
 
-        if resp.status().is_success() {
-            let pipelines: Vec<Value> = resp.json().await?;
-            for p in &pipelines {
-                if let Some(pipeline) = parse_gitlab_pipeline(p, *project_id, config) {
-                    all_pipelines.push(pipeline);
+                let mut pipelines = Vec::new();
+                if let Ok(r) = resp {
+                    if r.status().is_success() {
+                        let data: Vec<Value> = r.json().await.unwrap_or_default();
+                        for p in &data {
+                            if let Some(pipeline) = parse_gitlab_pipeline(p, pid, config) {
+                                pipelines.push(pipeline);
+                            }
+                        }
+                    }
                 }
+                pipelines
             }
-        }
-    }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+    let mut all_pipelines: Vec<GitLabPipeline> = results.into_iter().flatten().collect();
 
     // Sort by created_at descending (most recent first)
     all_pipelines.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -154,50 +172,53 @@ pub async fn fetch_pipelines(
 /// Discover project IDs from MRs the user is involved in
 async fn discover_project_ids(client: &Client, config: &GitLabConfig) -> AppResult<Vec<u64>> {
     let base_url = format!("https://{}/api/v4", sanitize_host(&config.host));
+
+    // Fetch authored and reviewer MRs in parallel to discover project IDs
+    let (authored_resp, reviewer_resp) = tokio::join!(
+        client
+            .get(format!("{}/merge_requests", base_url))
+            .query(&[
+                ("state", "opened"),
+                ("scope", "created_by_me"),
+                ("per_page", "50"),
+            ])
+            .header("PRIVATE-TOKEN", &config.token)
+            .send(),
+        client
+            .get(format!("{}/merge_requests", base_url))
+            .query(&[
+                ("state", "opened"),
+                ("scope", "all"),
+                ("reviewer_username", config.username.as_str()),
+                ("per_page", "50"),
+            ])
+            .header("PRIVATE-TOKEN", &config.token)
+            .send(),
+    );
+
     let mut project_ids = Vec::new();
 
-    // Get project IDs from authored MRs
-    let resp = client
-        .get(format!("{}/merge_requests", base_url))
-        .query(&[
-            ("state", "opened"),
-            ("scope", "created_by_me"),
-            ("per_page", "50"),
-        ])
-        .header("PRIVATE-TOKEN", &config.token)
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        let mrs: Vec<Value> = resp.json().await?;
-        for mr in &mrs {
-            if let Some(pid) = mr["project_id"].as_u64() {
-                if !project_ids.contains(&pid) {
-                    project_ids.push(pid);
+    if let Ok(resp) = authored_resp {
+        if resp.status().is_success() {
+            let mrs: Vec<Value> = resp.json().await.unwrap_or_default();
+            for mr in &mrs {
+                if let Some(pid) = mr["project_id"].as_u64() {
+                    if !project_ids.contains(&pid) {
+                        project_ids.push(pid);
+                    }
                 }
             }
         }
     }
 
-    // Also from reviewer MRs
-    let resp = client
-        .get(format!("{}/merge_requests", base_url))
-        .query(&[
-            ("state", "opened"),
-            ("scope", "all"),
-            ("reviewer_username", config.username.as_str()),
-            ("per_page", "50"),
-        ])
-        .header("PRIVATE-TOKEN", &config.token)
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        let mrs: Vec<Value> = resp.json().await?;
-        for mr in &mrs {
-            if let Some(pid) = mr["project_id"].as_u64() {
-                if !project_ids.contains(&pid) {
-                    project_ids.push(pid);
+    if let Ok(resp) = reviewer_resp {
+        if resp.status().is_success() {
+            let mrs: Vec<Value> = resp.json().await.unwrap_or_default();
+            for mr in &mrs {
+                if let Some(pid) = mr["project_id"].as_u64() {
+                    if !project_ids.contains(&pid) {
+                        project_ids.push(pid);
+                    }
                 }
             }
         }
@@ -215,7 +236,7 @@ pub async fn fetch_mr_detail(
 ) -> AppResult<GitLabMRDetail> {
     let base_url = format!("https://{}/api/v4", sanitize_host(&config.host));
 
-    // Fetch MR details
+    // Fetch MR details first (needed for parsing)
     let mr_resp = client
         .get(format!(
             "{}/projects/{}/merge_requests/{}",
@@ -232,20 +253,31 @@ pub async fn fetch_mr_detail(
     let mr = parse_gitlab_mr(&mr_data, "unknown", config)
         .ok_or_else(|| AppError::ExternalApi("Failed to parse GitLab MR".to_string()))?;
 
-    // Fetch notes (comments)
-    let notes_resp = client
-        .get(format!(
-            "{}/projects/{}/merge_requests/{}/notes",
-            base_url, project_id, iid
-        ))
-        .query(&[("per_page", "50")])
-        .header("PRIVATE-TOKEN", &config.token)
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?;
+    // Fetch notes and pipelines in parallel
+    let (notes_resp, pipelines_resp) = tokio::join!(
+        client
+            .get(format!(
+                "{}/projects/{}/merge_requests/{}/notes",
+                base_url, project_id, iid
+            ))
+            .query(&[("per_page", "50")])
+            .header("PRIVATE-TOKEN", &config.token)
+            .send(),
+        client
+            .get(format!(
+                "{}/projects/{}/merge_requests/{}/pipelines",
+                base_url, project_id, iid
+            ))
+            .query(&[("per_page", "5")])
+            .header("PRIVATE-TOKEN", &config.token)
+            .send(),
+    );
 
-    let notes_data: Vec<Value> = notes_resp.json().await?;
+    let notes_data: Vec<Value> = notes_resp?
+        .error_for_status()
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
+        .json()
+        .await?;
 
     let notes = notes_data
         .iter()
@@ -258,20 +290,12 @@ pub async fn fetch_mr_detail(
         })
         .collect();
 
-    // Fetch pipelines for this MR
-    let pipelines_resp = client
-        .get(format!(
-            "{}/projects/{}/merge_requests/{}/pipelines",
-            base_url, project_id, iid
-        ))
-        .query(&[("per_page", "5")])
-        .header("PRIVATE-TOKEN", &config.token)
-        .send()
-        .await?
+    let pipelines_data: Vec<Value> = pipelines_resp?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
+        .json()
+        .await?;
 
-    let pipelines_data: Vec<Value> = pipelines_resp.json().await?;
     let pipelines = pipelines_data
         .iter()
         .filter_map(|p| parse_gitlab_pipeline(p, project_id, config))

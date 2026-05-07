@@ -16,14 +16,21 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list_tickets(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let config = state.config.read().await;
+    let cache_key = "jira_tickets".to_string();
+    if let Some(cached) = state.api_cache.get(&cache_key).await {
+        return Ok(Json(cached));
+    }
+
+    let config = state.config.read().await.clone();
     let jira_config = config
         .jira
         .as_ref()
         .ok_or_else(|| AppError::NotConfigured("jira".to_string()))?;
 
     let tickets = services::jira::fetch_tickets(&state.http_client, jira_config).await?;
-    Ok(Json(json!({ "data": tickets })))
+    let response = json!({ "data": tickets });
+    state.api_cache.insert(cache_key, response.clone()).await;
+    Ok(Json(response))
 }
 
 async fn get_ticket_detail(

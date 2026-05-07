@@ -23,13 +23,21 @@ const { refresh, isRefreshing } = useAutoRefresh(() => store.fetchDashboard())
           Here's your day at a glance
         </p>
       </div>
-      <button
-        @click="refresh"
-        :disabled="isRefreshing"
-        class="px-4 py-2 text-sm rounded-md bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors"
-      >
-        {{ isRefreshing ? 'Refreshing...' : 'Refresh' }}
-      </button>
+      <div class="flex items-center gap-3">
+        <span
+          v-if="store.refreshing"
+          class="text-xs text-[var(--color-text-muted)] animate-pulse"
+        >
+          Updating...
+        </span>
+        <button
+          @click="refresh"
+          :disabled="isRefreshing"
+          class="px-4 py-2 text-sm rounded-md bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors"
+        >
+          {{ isRefreshing ? 'Refreshing...' : 'Refresh' }}
+        </button>
+      </div>
     </div>
 
     <!-- Errors -->
@@ -78,14 +86,14 @@ const { refresh, isRefreshing } = useAutoRefresh(() => store.fetchDashboard())
 
         <!-- GitLab Pipelines (only failed/running) -->
         <DashboardSection
-          v-if="store.gitlabPipelines.filter(p => p.status !== 'success').length"
+          v-if="store.failedPipelines.length"
           title="Pipelines"
-          :count="store.gitlabPipelines.filter(p => p.status !== 'success').length"
+          :count="store.failedPipelines.length"
           link="/gitlab"
         >
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <PipelineCard
-              v-for="pipeline in store.gitlabPipelines.filter(p => p.status !== 'success').slice(0, 6)"
+              v-for="pipeline in store.failedPipelines.slice(0, 6)"
               :key="pipeline.id"
               :pipeline="pipeline"
             />

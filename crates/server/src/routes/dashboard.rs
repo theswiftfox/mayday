@@ -14,15 +14,64 @@ pub fn router() -> Router<AppState> {
         .route("/", get(get_dashboard))
 }
 
-/// Fetches all enabled integrations and returns a unified dashboard view
+/// Fetches all enabled integrations and returns a unified dashboard view.
+/// All external API calls run concurrently via tokio::join! for minimal latency.
+/// Results are cached for 90 seconds to avoid redundant external API calls.
 async fn get_dashboard(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let config = state.config.read().await;
+    let cache_key = "dashboard".to_string();
+
+    // Check cache first (Fix 2)
+    if let Some(cached) = state.api_cache.get(&cache_key).await {
+        return Ok(Json(cached));
+    }
+
+    // Clone config and release the read lock immediately (Fix 3)
+    let config = state.config.read().await.clone();
+
+    let client = &state.http_client;
+
+    // Launch all fetches concurrently (Fix 1)
+    let (gh_result, jira_result, gl_mr_result, gl_pipe_result, cal_result) = tokio::join!(
+        async {
+            match &config.github {
+                Some(gh_config) => Some(services::github::fetch_prs(client, gh_config).await),
+                None => None,
+            }
+        },
+        async {
+            match &config.jira {
+                Some(jira_config) => Some(services::jira::fetch_tickets(client, jira_config).await),
+                None => None,
+            }
+        },
+        async {
+            match &config.gitlab {
+                Some(gl_config) => Some(services::gitlab::fetch_mrs(client, gl_config).await),
+                None => None,
+            }
+        },
+        async {
+            match &config.gitlab {
+                Some(gl_config) => Some(services::gitlab::fetch_pipelines(client, gl_config).await),
+                None => None,
+            }
+        },
+        async {
+            match &config.calendar {
+                Some(cal_config) => {
+                    Some(services::calendar::fetch_todays_events(client, cal_config).await)
+                }
+                None => None,
+            }
+        },
+    );
+
     let mut items = Vec::new();
     let mut errors = Vec::new();
 
-    // Fetch GitHub PRs
-    if let Some(gh_config) = &config.github {
-        match services::github::fetch_prs(&state.http_client, gh_config).await {
+    // Collect GitHub PRs
+    if let Some(result) = gh_result {
+        match result {
             Ok(prs) => {
                 for pr in prs {
                     items.push(json!({ "type": "github_pr", "data": pr }));
@@ -35,9 +84,9 @@ async fn get_dashboard(State(state): State<AppState>) -> AppResult<Json<Value>> 
         }
     }
 
-    // Fetch JIRA tickets
-    if let Some(jira_config) = &config.jira {
-        match services::jira::fetch_tickets(&state.http_client, jira_config).await {
+    // Collect JIRA tickets
+    if let Some(result) = jira_result {
+        match result {
             Ok(tickets) => {
                 for ticket in tickets {
                     items.push(json!({ "type": "jira_ticket", "data": ticket }));
@@ -50,9 +99,9 @@ async fn get_dashboard(State(state): State<AppState>) -> AppResult<Json<Value>> 
         }
     }
 
-    // Fetch GitLab MRs
-    if let Some(gl_config) = &config.gitlab {
-        match services::gitlab::fetch_mrs(&state.http_client, gl_config).await {
+    // Collect GitLab MRs
+    if let Some(result) = gl_mr_result {
+        match result {
             Ok(mrs) => {
                 for mr in mrs {
                     items.push(json!({ "type": "gitlab_mr", "data": mr }));
@@ -63,8 +112,11 @@ async fn get_dashboard(State(state): State<AppState>) -> AppResult<Json<Value>> 
                 "message": e.to_string(),
             })),
         }
+    }
 
-        match services::gitlab::fetch_pipelines(&state.http_client, gl_config).await {
+    // Collect GitLab Pipelines
+    if let Some(result) = gl_pipe_result {
+        match result {
             Ok(pipelines) => {
                 for pipeline in pipelines {
                     items.push(json!({ "type": "gitlab_pipeline", "data": pipeline }));
@@ -77,9 +129,9 @@ async fn get_dashboard(State(state): State<AppState>) -> AppResult<Json<Value>> 
         }
     }
 
-    // Fetch Calendar events
-    if let Some(calendar_config) = &config.calendar {
-        match services::calendar::fetch_todays_events(&state.http_client, calendar_config).await {
+    // Collect Calendar events
+    if let Some(result) = cal_result {
+        match result {
             Ok(events) => {
                 for event in events {
                     items.push(json!({ "type": "calendar_event", "data": event }));
@@ -94,9 +146,14 @@ async fn get_dashboard(State(state): State<AppState>) -> AppResult<Json<Value>> 
 
     let timestamp = chrono::Utc::now().to_rfc3339();
 
-    Ok(Json(json!({
+    let response = serde_json::json!({
         "items": items,
         "errors": errors,
         "last_updated": timestamp,
-    })))
+    });
+
+    // Store in cache for subsequent requests (Fix 2)
+    state.api_cache.insert(cache_key, response.clone()).await;
+
+    Ok(Json(response))
 }
