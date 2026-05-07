@@ -17,14 +17,21 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list_mrs(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let config = state.config.read().await;
+    let cache_key = "gitlab_mrs".to_string();
+    if let Some(cached) = state.api_cache.get(&cache_key).await {
+        return Ok(Json(cached));
+    }
+
+    let config = state.config.read().await.clone();
     let gl_config = config
         .gitlab
         .as_ref()
         .ok_or_else(|| AppError::NotConfigured("gitlab".to_string()))?;
 
     let mrs = services::gitlab::fetch_mrs(&state.http_client, gl_config).await?;
-    Ok(Json(json!({ "data": mrs })))
+    let response = json!({ "data": mrs });
+    state.api_cache.insert(cache_key, response.clone()).await;
+    Ok(Json(response))
 }
 
 async fn get_mr_detail(
@@ -49,12 +56,19 @@ async fn get_mr_detail(
 }
 
 async fn list_pipelines(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let config = state.config.read().await;
+    let cache_key = "gitlab_pipelines".to_string();
+    if let Some(cached) = state.api_cache.get(&cache_key).await {
+        return Ok(Json(cached));
+    }
+
+    let config = state.config.read().await.clone();
     let gl_config = config
         .gitlab
         .as_ref()
         .ok_or_else(|| AppError::NotConfigured("gitlab".to_string()))?;
 
     let pipelines = services::gitlab::fetch_pipelines(&state.http_client, gl_config).await?;
-    Ok(Json(json!({ "data": pipelines })))
+    let response = json!({ "data": pipelines });
+    state.api_cache.insert(cache_key, response.clone()).await;
+    Ok(Json(response))
 }

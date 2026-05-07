@@ -21,14 +21,21 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list_prs(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let config = state.config.read().await;
+    let cache_key = "github_prs".to_string();
+    if let Some(cached) = state.api_cache.get(&cache_key).await {
+        return Ok(Json(cached));
+    }
+
+    let config = state.config.read().await.clone();
     let gh_config = config
         .github
         .as_ref()
         .ok_or_else(|| AppError::NotConfigured("github".to_string()))?;
 
     let prs = services::github::fetch_prs(&state.http_client, gh_config).await?;
-    Ok(Json(json!({ "data": prs })))
+    let response = json!({ "data": prs });
+    state.api_cache.insert(cache_key, response.clone()).await;
+    Ok(Json(response))
 }
 
 async fn get_pr_detail(

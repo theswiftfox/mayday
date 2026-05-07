@@ -1,9 +1,16 @@
+use std::sync::Arc;
+
+use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::Semaphore;
 
 use crate::config::GitHubConfig;
 use crate::error::{AppError, AppResult};
+
+/// Max concurrent enrichment requests to avoid GitHub secondary rate limits
+const MAX_CONCURRENT_ENRICHMENTS: usize = 5;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitHubPR {
@@ -59,33 +66,40 @@ pub struct GitHubReview {
 pub async fn fetch_prs(client: &Client, config: &GitHubConfig) -> AppResult<Vec<GitHubPR>> {
     let mut all_prs = Vec::new();
 
-    // Fetch PRs authored by the user
-    let authored = fetch_authored_prs(client, config).await?;
-    all_prs.extend(authored);
+    // Fetch authored and review-requested PRs in parallel (they're independent)
+    let (authored_result, reviewing_result) = tokio::join!(
+        fetch_authored_prs(client, config),
+        fetch_review_requested_prs(client, config),
+    );
 
-    // Fetch PRs where user is requested as reviewer
-    let reviewing = fetch_review_requested_prs(client, config).await?;
-    all_prs.extend(reviewing);
+    all_prs.extend(authored_result?);
+    all_prs.extend(reviewing_result?);
 
-    // Fetch other open PRs in configured repos (not authored or reviewing)
+    // Fetch other open PRs in configured repos (depends on above results for deduplication)
     let other = fetch_other_open_prs(client, config, &all_prs).await?;
     all_prs.extend(other);
 
-    // Enrich PRs with action_required status (parallel) — only for authored/reviewing
+    // Enrich PRs with action_required status — only for authored/reviewing
+    // Use a semaphore to limit concurrent requests and avoid GitHub rate limits
     let (to_enrich, other_prs): (Vec<_>, Vec<_>) = all_prs
         .into_iter()
         .partition(|pr| pr.role == "author" || pr.role == "reviewer");
 
-    let enrichment_futures: Vec<_> = to_enrich
-        .into_iter()
-        .map(|pr| enrich_pr_action_required(client, config, pr))
-        .collect();
-
-    let mut all_prs: Vec<GitHubPR> = futures::future::join_all(enrichment_futures)
-        .await
-        .into_iter()
-        .map(|r| r.unwrap_or_else(|_| unreachable!()))
-        .collect();
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_ENRICHMENTS));
+    let mut all_prs: Vec<GitHubPR> = stream::iter(to_enrich)
+        .map(|pr| {
+            let sem = semaphore.clone();
+            let client = client.clone();
+            let config = config.clone();
+            async move {
+                let _permit = sem.acquire().await.unwrap();
+                enrich_pr_action_required(&client, &config, pr).await
+            }
+        })
+        .buffer_unordered(MAX_CONCURRENT_ENRICHMENTS)
+        .filter_map(|r| async { r.ok() })
+        .collect()
+        .await;
 
     all_prs.extend(other_prs);
 
@@ -108,7 +122,7 @@ async fn enrich_pr_action_required(
         owner, repo, pr.number
     );
 
-    // Fetch commits and comments/reviews in parallel
+    // Fetch commits, comments, reviews, and check-runs ALL in parallel
     let commits_fut = client
         .get(format!("{}/commits?per_page=100", base_url))
         .header("Authorization", format!("Bearer {}", config.token))
@@ -158,6 +172,22 @@ async fn enrich_pr_action_required(
         .map(String::from);
 
     pr.last_commit_at = last_commit_at.clone();
+
+    // Fetch CI status from check runs for the head commit (fires immediately, awaited later)
+    let check_runs_fut = if let Some(ref sha) = head_sha {
+        let fut = client
+            .get(format!(
+                "https://api.github.com/repos/{}/{}/commits/{}/check-runs",
+                owner, repo, sha
+            ))
+            .header("Authorization", format!("Bearer {}", config.token))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send();
+        Some(fut)
+    } else {
+        None
+    };
 
     // Parse review comments (inline comments on diffs)
     let comments: Vec<Value> = match comments_res {
@@ -272,20 +302,9 @@ async fn enrich_pr_action_required(
         _ => false,
     };
 
-    // Fetch CI status from check runs for the head commit
-    if let Some(ref sha) = head_sha {
-        let check_runs_resp = client
-            .get(format!(
-                "https://api.github.com/repos/{}/{}/commits/{}/check-runs",
-                owner, repo, sha
-            ))
-            .header("Authorization", format!("Bearer {}", config.token))
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .send()
-            .await;
-
-        if let Ok(resp) = check_runs_resp {
+    // Await the check-runs response (was fired earlier, concurrently with comment/review parsing)
+    if let Some(check_fut) = check_runs_fut {
+        if let Ok(resp) = check_fut.await {
             if resp.status().is_success() {
                 let body: Value = resp.json().await.unwrap_or_default();
                 let check_runs = body["check_runs"].as_array();
