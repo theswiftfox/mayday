@@ -17,7 +17,7 @@ pub struct GitHubPR {
     pub is_draft: bool,
     pub created_at: String,
     pub updated_at: String,
-    pub role: String, // "author" or "reviewer"
+    pub role: String, // "author", "reviewer", or "other"
     pub has_new_comments: bool,
     pub has_new_commits: bool,
     pub action_required: bool,
@@ -25,6 +25,8 @@ pub struct GitHubPR {
     pub last_commit_at: Option<String>,
     pub labels: Vec<String>,
     pub review_decision: Option<String>,
+    /// CI status: "success", "failure", "pending", "neutral", or null
+    pub ci_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,17 +67,27 @@ pub async fn fetch_prs(client: &Client, config: &GitHubConfig) -> AppResult<Vec<
     let reviewing = fetch_review_requested_prs(client, config).await?;
     all_prs.extend(reviewing);
 
-    // Enrich PRs with action_required status (parallel)
-    let enrichment_futures: Vec<_> = all_prs
+    // Fetch other open PRs in configured repos (not authored or reviewing)
+    let other = fetch_other_open_prs(client, config, &all_prs).await?;
+    all_prs.extend(other);
+
+    // Enrich PRs with action_required status (parallel) — only for authored/reviewing
+    let (to_enrich, other_prs): (Vec<_>, Vec<_>) = all_prs
+        .into_iter()
+        .partition(|pr| pr.role == "author" || pr.role == "reviewer");
+
+    let enrichment_futures: Vec<_> = to_enrich
         .into_iter()
         .map(|pr| enrich_pr_action_required(client, config, pr))
         .collect();
 
-    let all_prs = futures::future::join_all(enrichment_futures)
+    let mut all_prs: Vec<GitHubPR> = futures::future::join_all(enrichment_futures)
         .await
         .into_iter()
         .map(|r| r.unwrap_or_else(|_| unreachable!()))
         .collect();
+
+    all_prs.extend(other_prs);
 
     Ok(all_prs)
 }
@@ -121,11 +133,13 @@ async fn enrich_pr_action_required(
     let (commits_res, comments_res, reviews_res) =
         tokio::join!(commits_fut, comments_fut, reviews_fut);
 
-    // Parse commits - get the latest commit date
+    // Parse commits - get the latest commit date and head SHA
     let commits: Vec<Value> = match commits_res {
         Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
         _ => vec![],
     };
+
+    let head_sha = commits.last().and_then(|c| c["sha"].as_str()).map(String::from);
 
     let last_commit_at = commits
         .last()
@@ -159,6 +173,17 @@ async fn enrich_pr_action_required(
 
     // Compute action_required based on role
     pr.action_required = match pr.role.as_str() {
+        // Never action required for draft PRs
+        _ if pr.is_draft => false,
+        // Never action required for reviewer when changes are requested (ball is in author's court)
+        "reviewer"
+            if pr.labels.iter().any(|l| {
+                let lower = l.to_ascii_lowercase();
+                lower == "changes requested" || lower == "changes-requested"
+            }) =>
+        {
+            false
+        }
         "author" => {
             // Action required if there are comments from others newer than my last commit
             if let Some(ref my_commit_date) = my_last_commit_at {
@@ -247,6 +272,61 @@ async fn enrich_pr_action_required(
         _ => false,
     };
 
+    // Fetch CI status from check runs for the head commit
+    if let Some(ref sha) = head_sha {
+        let check_runs_resp = client
+            .get(format!(
+                "https://api.github.com/repos/{}/{}/commits/{}/check-runs",
+                owner, repo, sha
+            ))
+            .header("Authorization", format!("Bearer {}", config.token))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .await;
+
+        if let Ok(resp) = check_runs_resp {
+            if resp.status().is_success() {
+                let body: Value = resp.json().await.unwrap_or_default();
+                let check_runs = body["check_runs"].as_array();
+                if let Some(runs) = check_runs {
+                    if !runs.is_empty() {
+                        // Derive overall status:
+                        // - any failure/timed_out/cancelled → "failure"
+                        // - any in_progress/queued/pending → "pending"
+                        // - all success/neutral/skipped → "success"
+                        let mut has_failure = false;
+                        let mut has_pending = false;
+
+                        for run in runs {
+                            let status = run["status"].as_str().unwrap_or("");
+                            let conclusion = run["conclusion"].as_str().unwrap_or("");
+
+                            if status == "in_progress" || status == "queued" || status == "pending"
+                            {
+                                has_pending = true;
+                            } else if conclusion == "failure"
+                                || conclusion == "timed_out"
+                                || conclusion == "cancelled"
+                            {
+                                has_failure = true;
+                            }
+                            // neutral/skipped/success all count as passing
+                        }
+
+                        pr.ci_status = Some(if has_failure {
+                            "failure".to_string()
+                        } else if has_pending {
+                            "pending".to_string()
+                        } else {
+                            "success".to_string()
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     Ok(pr)
 }
 
@@ -312,6 +392,52 @@ async fn fetch_review_requested_prs(
     for item in items {
         if let Some(pr) = parse_search_result(item, &config.username, "reviewer") {
             if config.repos.is_empty() || config.repos.iter().any(|r| pr.repo == *r) {
+                prs.push(pr);
+            }
+        }
+    }
+
+    Ok(prs)
+}
+
+/// Fetch all other open PRs in configured repos that aren't already in the authored/reviewing lists
+async fn fetch_other_open_prs(
+    client: &Client,
+    config: &GitHubConfig,
+    existing_prs: &[GitHubPR],
+) -> AppResult<Vec<GitHubPR>> {
+    // Only fetch if repos are configured
+    if config.repos.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build a search query: open PRs in the configured repos
+    let repo_filter: Vec<String> = config.repos.iter().map(|r| format!("repo:{}", r)).collect();
+    let query = format!("is:pr is:open {}", repo_filter.join(" "));
+
+    let resp = client
+        .get("https://api.github.com/search/issues")
+        .query(&[("q", &query), ("per_page", &"100".to_string())])
+        .header("Authorization", format!("Bearer {}", config.token))
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?;
+
+    let body: Value = resp.json().await?;
+    let empty = vec![];
+    let items = body["items"].as_array().unwrap_or(&empty);
+
+    // Collect IDs of PRs we already have
+    let existing_ids: std::collections::HashSet<u64> = existing_prs.iter().map(|pr| pr.id).collect();
+
+    let mut prs = Vec::new();
+    for item in items {
+        if let Some(pr) = parse_search_result(item, &config.username, "other") {
+            // Skip PRs we already have as authored/reviewing
+            if !existing_ids.contains(&pr.id) {
                 prs.push(pr);
             }
         }
@@ -406,6 +532,7 @@ pub async fn fetch_pr_detail(
             })
             .unwrap_or_default(),
         review_decision: None,
+        ci_status: None,
     };
 
     let comments = comments_data
@@ -473,6 +600,7 @@ fn parse_search_result(item: &Value, _username: &str, role: &str) -> Option<GitH
             })
             .unwrap_or_default(),
         review_decision: None,
+        ci_status: None,
     })
 }
 
