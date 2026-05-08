@@ -8,6 +8,9 @@ pub struct AppConfig {
     pub gitlab: Option<GitLabConfig>,
     pub calendar: Option<CalendarConfig>,
     pub general: GeneralConfig,
+    /// Dashboard layout, filters, and importance rules
+    #[serde(default)]
+    pub dashboard: DashboardConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +98,160 @@ impl Default for GeneralConfig {
             theme: "system".to_string(),
         }
     }
+}
+
+/// Dashboard layout and filter preferences
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardConfig {
+    /// Section display order (e.g. ["important", "github_pr", "gitlab_mr", ...])
+    #[serde(default = "default_section_order")]
+    pub section_order: Vec<String>,
+    /// Which sections are visible. Empty = all visible (default).
+    #[serde(default = "default_visible_sections")]
+    pub visible_sections: Vec<String>,
+    /// Calendar layout: "sidebar" (right column) or "inline" (regular section)
+    #[serde(default = "default_calendar_layout")]
+    pub calendar_layout: String,
+    /// Rules for auto-populating the Important section
+    #[serde(default)]
+    pub important_rules: ImportantRules,
+    /// Manually pinned items
+    #[serde(default)]
+    pub pinned_items: Vec<PinnedItem>,
+    /// Per-integration filters
+    #[serde(default)]
+    pub filters: DashboardFilters,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        Self {
+            section_order: default_section_order(),
+            visible_sections: default_visible_sections(),
+            calendar_layout: default_calendar_layout(),
+            important_rules: ImportantRules::default(),
+            pinned_items: Vec::new(),
+            filters: DashboardFilters::default(),
+        }
+    }
+}
+
+fn default_section_order() -> Vec<String> {
+    vec![
+        "important".to_string(),
+        "github_pr".to_string(),
+        "gitlab".to_string(),
+        "jira_ticket".to_string(),
+        "calendar_event".to_string(),
+    ]
+}
+
+fn default_visible_sections() -> Vec<String> {
+    default_section_order()
+}
+
+fn default_calendar_layout() -> String {
+    "sidebar".to_string()
+}
+
+/// Rules that determine which items automatically appear in the Important section
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ImportantRules {
+    #[serde(default)]
+    pub github_action_required: bool,
+    #[serde(default)]
+    pub github_new_comments: bool,
+    #[serde(default)]
+    pub github_new_commits: bool,
+    #[serde(default)]
+    pub github_changes_requested: bool,
+    #[serde(default)]
+    pub gitlab_mr_new_comments: bool,
+    #[serde(default)]
+    pub gitlab_mr_new_commits: bool,
+    #[serde(default)]
+    pub gitlab_pipeline_failed: bool,
+    #[serde(default)]
+    pub jira_high_priority: bool,
+    #[serde(default)]
+    pub calendar_starting_soon: bool,
+}
+
+/// A manually pinned item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinnedItem {
+    /// Item type: "github_pr", "gitlab_mr", "gitlab_pipeline", "jira_ticket", "calendar_event"
+    pub item_type: String,
+    /// Unique identifier: "org/repo#123" for PRs, "project_id!iid" for MRs, "PROJ-123" for tickets, etc.
+    pub item_id: String,
+}
+
+/// Per-integration filter settings
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DashboardFilters {
+    #[serde(default)]
+    pub github_pr: GitHubPRFilter,
+    #[serde(default)]
+    pub gitlab_mr: GitLabMRFilter,
+    #[serde(default)]
+    pub gitlab_pipeline: GitLabPipelineFilter,
+    #[serde(default)]
+    pub jira_ticket: JiraTicketFilter,
+    #[serde(default)]
+    pub calendar_event: CalendarEventFilter,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GitHubPRFilter {
+    /// Filter by role: ["author", "reviewer", "other"]. Empty = show all.
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Hide draft PRs
+    #[serde(default)]
+    pub hide_drafts: bool,
+    /// Only show PRs where action is required
+    #[serde(default)]
+    pub action_required_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GitLabMRFilter {
+    /// Filter by role: ["author", "reviewer"]. Empty = show all.
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Hide draft MRs
+    #[serde(default)]
+    pub hide_drafts: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GitLabPipelineFilter {
+    /// Filter by status: ["failed", "running", "pending", ...]. Empty = show all non-success.
+    #[serde(default)]
+    pub statuses: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct JiraTicketFilter {
+    /// Filter by status category: ["todo", "in_progress", "done"]. Empty = show all.
+    #[serde(default)]
+    pub status_categories: Vec<String>,
+    /// Filter by priority: ["highest", "high", "medium", "low", "lowest"]. Empty = show all.
+    #[serde(default)]
+    pub priorities: Vec<String>,
+    /// Filter by issue type: ["story", "bug", "task", ...]. Empty = show all.
+    #[serde(default)]
+    pub issue_types: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CalendarEventFilter {
+    /// Hide all-day events
+    #[serde(default)]
+    pub hide_all_day: bool,
+    /// Only show online meetings
+    #[serde(default)]
+    pub online_only: bool,
 }
 
 fn default_poll_interval() -> u64 {
