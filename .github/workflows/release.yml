@@ -67,20 +67,22 @@ jobs:
           echo -n "$APPLE_API_KEY_CONTENT" > ~/private_keys/AuthKey_${APPLE_API_KEY}.p8
 
       - name: Build and sign (aarch64)
+        working-directory: apps/desktop
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
-        run: pnpm --filter @myday/desktop build -- --target aarch64-apple-darwin
+        run: pnpm tauri build --target aarch64-apple-darwin
 
       - name: Build and sign (x86_64)
+        working-directory: apps/desktop
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
-        run: pnpm --filter @myday/desktop build -- --target x86_64-apple-darwin
+        run: pnpm tauri build --target x86_64-apple-darwin
 
       - name: Determine version
         id: version
@@ -95,16 +97,9 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p release-artifacts
-          cp target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
-          cp target/x86_64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
-          # Rename for clarity
-          cd release-artifacts
-          for f in *.dmg; do
-            if echo "$f" | grep -qv "aarch64\|x86_64"; then
-              : # already named fine
-            fi
-          done
-          ls -la
+          cp apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
+          cp apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
+          ls -la release-artifacts/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
