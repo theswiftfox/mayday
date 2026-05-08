@@ -25,7 +25,7 @@ const calManualCode = ref('')
 const config = ref({
   github: { token: '', username: '', repos: '', poll_interval: 300, oauth_client_id: '' },
   jira: { host: '', email: '', api_token: '', project_keys: '', poll_interval: 300 },
-  gitlab: { host: '', token: '', username: '', project_ids: '', poll_interval: 300 },
+  gitlab: { host: '', token: '', username: '', projects: '' as string, poll_interval: 300 },
   calendar: { source: 'ics', ics_url: '', ms_client_id: '', ms_tenant_id: '', ms_redirect_uri: '', poll_interval: 300 },
   general: { theme: 'system', refresh_on_focus: true },
 })
@@ -55,7 +55,7 @@ onMounted(async () => {
       if (data.gitlab) {
         config.value.gitlab.host = data.gitlab.host || ''
         config.value.gitlab.username = data.gitlab.username || ''
-        config.value.gitlab.project_ids = (data.gitlab.project_ids || []).join(', ')
+        config.value.gitlab.projects = (data.gitlab.projects || []).map((p: any) => p.path).join(', ')
         config.value.gitlab.poll_interval = data.gitlab.poll_interval_secs || 300
       }
       if (data.calendar) {
@@ -95,7 +95,32 @@ async function save() {
   error.value = ''
   success.value = ''
   try {
-    await api.updateConfig(config.value)
+    // Resolve GitLab project paths to IDs before saving
+    const gitlabPayload: any = { ...config.value.gitlab }
+    if (gitlabPayload.projects && gitlabPayload.host) {
+      const paths = (gitlabPayload.projects as string)
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0)
+
+      const resolved = await Promise.all(
+        paths.map(async (path: string) => {
+          try {
+            return await api.resolveGitLabProject(gitlabPayload.host, path)
+          } catch {
+            // If resolution fails, skip this project
+            return null
+          }
+        })
+      )
+
+      gitlabPayload.projects = resolved.filter(Boolean)
+    } else {
+      gitlabPayload.projects = []
+    }
+    delete gitlabPayload.project_ids
+
+    await api.updateConfig({ ...config.value, gitlab: gitlabPayload })
     success.value = 'Settings saved successfully'
   } catch (e: any) {
     error.value = e.message || 'Failed to save settings'
@@ -524,8 +549,8 @@ watch(() => config.value.general.theme, (newTheme) => {
             <input v-model="config.gitlab.username" type="text" class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
           </label>
           <label class="block">
-            <span class="text-sm text-[var(--color-text-muted)]">Project IDs (comma-separated)</span>
-            <input v-model="config.gitlab.project_ids" type="text" class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
+            <span class="text-sm text-[var(--color-text-muted)]">Projects (comma-separated paths, e.g. group/project)</span>
+            <input v-model="config.gitlab.projects" type="text" class="mt-1 block w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)] px-3 py-2" />
           </label>
           <label class="block">
             <span class="text-sm text-[var(--color-text-muted)]">Poll Interval (seconds)</span>

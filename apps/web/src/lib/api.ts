@@ -104,6 +104,13 @@ class ApiClient {
     return this.request<{ data: any[] }>('/gitlab/pipelines')
   }
 
+  async resolveGitLabProject(host: string, path: string) {
+    return this.request<{ id: number; path: string }>('/gitlab/resolve-project', {
+      method: 'POST',
+      body: JSON.stringify({ host, path }),
+    })
+  }
+
   // Calendar
   async getCalendarEvents() {
     return this.request<{ data: any[] }>('/calendar/events')
@@ -154,6 +161,17 @@ class ApiClient {
     return this.request<any>('/config', {
       method: 'PUT',
       body: JSON.stringify(config),
+    })
+  }
+
+  async getDashboardConfig() {
+    return this.request<any>('/config/dashboard')
+  }
+
+  async updateDashboardConfig(dashboard: any) {
+    return this.request<any>('/config/dashboard', {
+      method: 'PUT',
+      body: JSON.stringify(dashboard),
     })
   }
 }

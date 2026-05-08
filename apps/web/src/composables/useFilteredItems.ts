@@ -32,7 +32,7 @@ export function useFilteredGitLabMRs(mrs: Ref<any[]>, filter: Ref<GitLabMRFilter
   })
 }
 
-/** Apply GitLab Pipeline filters. Default behavior: show non-success only (matching current dashboard behavior). */
+/** Apply GitLab Pipeline filters */
 export function useFilteredGitLabPipelines(pipelines: Ref<any[]>, filter: Ref<GitLabPipelineFilter>) {
   return computed(() => {
     return pipelines.value.filter((p) => {
@@ -40,8 +40,8 @@ export function useFilteredGitLabPipelines(pipelines: Ref<any[]>, filter: Ref<Gi
       if (f.statuses.length) {
         return f.statuses.includes(p.status)
       }
-      // Default: show non-success (preserves existing dashboard behavior)
-      return p.status !== 'success'
+      // No filter active: show all pipelines
+      return true
     })
   })
 }

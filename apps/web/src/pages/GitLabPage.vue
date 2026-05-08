@@ -57,6 +57,7 @@ const hasImportant = computed(() => importantMRs.value.length + importantPipelin
 
 const restAuthored = computed(() => mrSplit.value.rest.filter(mr => mr.role === 'author'))
 const restReviewing = computed(() => mrSplit.value.rest.filter(mr => mr.role === 'reviewer'))
+const restOther = computed(() => mrSplit.value.rest.filter(mr => mr.role === 'other'))
 const restPipelines = computed(() => pipelineSplit.value.rest)
 </script>
 
@@ -98,10 +99,17 @@ const restPipelines = computed(() => pipelineSplit.value.rest)
         </div>
       </section>
 
-      <section v-if="restReviewing.length" class="mb-8">
+      <section v-if="restReviewing.length" class="mb-6">
         <h3 class="text-base font-medium text-[var(--color-text-muted)] mb-3">Reviewing</h3>
         <div class="space-y-3">
           <MRCard v-for="mr in restReviewing" :key="mr.id" :mr="mr" show-pin />
+        </div>
+      </section>
+
+      <section v-if="restOther.length" class="mb-8">
+        <h3 class="text-base font-medium text-[var(--color-text-muted)] mb-3">Other</h3>
+        <div class="space-y-3">
+          <MRCard v-for="mr in restOther" :key="mr.id" :mr="mr" show-pin />
         </div>
       </section>
 

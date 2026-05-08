@@ -129,7 +129,68 @@ pub async fn fetch_mrs(client: &Client, config: &GitLabConfig) -> AppResult<Vec<
         }
     }
 
+    // Fetch other open MRs in configured projects (not authored/reviewing by user)
+    let other = fetch_other_open_mrs(client, config, &all_mrs).await?;
+    all_mrs.extend(other);
+
     Ok(all_mrs)
+}
+
+/// Fetch all other open MRs in configured projects that aren't already in the authored/reviewing lists
+async fn fetch_other_open_mrs(
+    client: &Client,
+    config: &GitLabConfig,
+    existing_mrs: &[GitLabMR],
+) -> AppResult<Vec<GitLabMR>> {
+    // Only fetch if projects are configured
+    let project_ids = config.numeric_project_ids();
+    if project_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let base_url = format!("https://{}/api/v4", sanitize_host(&config.host));
+
+    // Collect IDs of MRs we already have
+    let existing_ids: std::collections::HashSet<u64> = existing_mrs.iter().map(|mr| mr.id).collect();
+
+    // Fetch open MRs for each configured project in parallel
+    let futures: Vec<_> = project_ids
+        .iter()
+        .map(|project_id| {
+            let url = format!("{}/projects/{}/merge_requests", base_url, project_id);
+            let token = config.token.clone();
+            async move {
+                let resp = client
+                    .get(&url)
+                    .query(&[("state", "opened"), ("per_page", "50")])
+                    .header("PRIVATE-TOKEN", &token)
+                    .send()
+                    .await;
+
+                let mut mrs = Vec::new();
+                if let Ok(r) = resp {
+                    if r.status().is_success() {
+                        let data: Vec<Value> = r.json().await.unwrap_or_default();
+                        mrs = data;
+                    }
+                }
+                mrs
+            }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+    let mut other_mrs = Vec::new();
+
+    for mr_data in results.into_iter().flatten() {
+        if let Some(parsed) = parse_gitlab_mr(&mr_data, "other", config) {
+            if !existing_ids.contains(&parsed.id) {
+                other_mrs.push(parsed);
+            }
+        }
+    }
+
+    Ok(other_mrs)
 }
 
 /// Fetch recent pipelines for the user's projects
@@ -140,11 +201,14 @@ pub async fn fetch_pipelines(
     let base_url = format!("https://{}/api/v4", sanitize_host(&config.host));
 
     // Determine project IDs: use configured list, or derive from user's MRs
-    let project_ids = if !config.project_ids.is_empty() {
-        config.project_ids.clone()
-    } else {
-        // Auto-discover from MRs the user is involved in
-        discover_project_ids(client, config).await?
+    let project_ids = {
+        let configured = config.numeric_project_ids();
+        if !configured.is_empty() {
+            configured
+        } else {
+            // Auto-discover from MRs the user is involved in
+            discover_project_ids(client, config).await?
+        }
     };
 
     // Fetch pipelines for ALL projects in parallel
@@ -353,7 +417,8 @@ fn parse_gitlab_mr(mr: &Value, role: &str, config: &GitLabConfig) -> Option<GitL
     let project_id = mr["project_id"].as_u64().unwrap_or(0);
 
     // Apply project filter
-    if !config.project_ids.is_empty() && !config.project_ids.contains(&project_id) {
+    let project_ids = config.numeric_project_ids();
+    if !project_ids.is_empty() && !project_ids.contains(&project_id) {
         return None;
     }
 
