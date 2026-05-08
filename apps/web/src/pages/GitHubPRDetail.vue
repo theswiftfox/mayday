@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '@/lib/api'
 import MarkdownContent from '@/components/MarkdownContent.vue'
+import CommentThread from '@/components/CommentThread.vue'
+import type { ThreadComment } from '@/components/CommentThread.vue'
 
 const route = useRoute()
 const pr = ref<any>(null)
 const loading = ref(true)
 const error = ref('')
+const showResolved = ref(false)
 
 onMounted(async () => {
   try {
@@ -20,6 +23,86 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+// Build a unified timeline: reviews + issue comments + review threads, sorted by date
+const timeline = computed(() => {
+  if (!pr.value) return []
+
+  const items: Array<{
+    type: 'review' | 'issue_comment' | 'review_thread'
+    date: string
+    data: any
+  }> = []
+
+  // Reviews (approval / changes requested / commented)
+  for (const review of pr.value.reviews || []) {
+    // Skip empty COMMENTED reviews (they're just the container for review threads)
+    if (review.state === 'COMMENTED' && !review.body) continue
+    items.push({
+      type: 'review',
+      date: review.submitted_at,
+      data: review,
+    })
+  }
+
+  // Issue comments (top-level conversation)
+  for (const comment of pr.value.issue_comments || []) {
+    items.push({
+      type: 'issue_comment',
+      date: comment.created_at,
+      data: comment,
+    })
+  }
+
+  // Review threads (code review discussions)
+  for (const thread of pr.value.review_threads || []) {
+    const firstComment = thread.comments?.[0]
+    items.push({
+      type: 'review_thread',
+      date: firstComment?.created_at || '',
+      data: thread,
+    })
+  }
+
+  items.sort((a, b) => a.date.localeCompare(b.date))
+  return items
+})
+
+const visibleTimeline = computed(() => {
+  if (showResolved.value) return timeline.value
+  return timeline.value.filter(
+    (item) => item.type !== 'review_thread' || !item.data.is_resolved
+  )
+})
+
+const resolvedCount = computed(() =>
+  (pr.value?.review_threads || []).filter((t: any) => t.is_resolved).length
+)
+
+function toThreadComments(thread: any): ThreadComment[] {
+  return (thread.comments || []).map((c: any) => ({
+    id: c.id,
+    author: c.author,
+    body: c.body,
+    created_at: c.created_at,
+  }))
+}
+
+function reviewStateClass(state: string): string {
+  switch (state) {
+    case 'APPROVED':
+      return 'bg-green-500/10 text-green-500'
+    case 'CHANGES_REQUESTED':
+      return 'bg-red-500/10 text-red-500'
+    default:
+      return 'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]'
+  }
+}
+
+function formatDate(iso: string): string {
+  if (!iso) return ''
+  return new Date(iso).toLocaleString()
+}
 </script>
 
 <template>
@@ -35,45 +118,63 @@ onMounted(async () => {
       </div>
 
       <!-- PR Body -->
-      <div v-if="pr.body" class="mb-8 p-4 rounded bg-[var(--color-surface)] border border-[var(--color-border)]">
+      <div v-if="pr.body" class="mb-8 p-4 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
         <MarkdownContent :content="pr.body" />
       </div>
 
-      <!-- Reviews -->
-      <section v-if="pr.reviews?.length" class="mb-8">
-        <h2 class="text-lg font-semibold text-[var(--color-text)] mb-3">Reviews</h2>
-        <div class="space-y-3">
-          <div v-for="review in pr.reviews" :key="review.id" class="p-4 rounded bg-[var(--color-surface)] border border-[var(--color-border)]">
-            <div class="flex items-center gap-2 mb-2">
-              <span class="font-medium text-[var(--color-text)]">{{ review.author }}</span>
-              <span
-                class="text-xs px-2 py-0.5 rounded"
-                :class="{
-                  'bg-green-500/10 text-green-600': review.state === 'APPROVED',
-                  'bg-red-500/10 text-red-600': review.state === 'CHANGES_REQUESTED',
-                  'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]': review.state !== 'APPROVED' && review.state !== 'CHANGES_REQUESTED',
-                }"
-              >{{ review.state }}</span>
-              <span class="text-xs text-[var(--color-text-muted)] ml-auto">{{ new Date(review.submitted_at).toLocaleString() }}</span>
-            </div>
-            <MarkdownContent v-if="review.body" :content="review.body" />
-          </div>
-        </div>
-      </section>
+      <!-- Activity header -->
+      <div class="flex items-center gap-4 mb-4">
+        <h2 class="text-lg font-semibold text-[var(--color-text)]">Activity</h2>
+        <label v-if="resolvedCount > 0" class="flex items-center gap-2 text-sm cursor-pointer" style="color: var(--color-text-muted)">
+          <input type="checkbox" v-model="showResolved" class="rounded" />
+          Show resolved ({{ resolvedCount }})
+        </label>
+      </div>
 
-      <!-- Comments -->
-      <section v-if="pr.comments?.length">
-        <h2 class="text-lg font-semibold text-[var(--color-text)] mb-3">Comments</h2>
-        <div class="space-y-3">
-          <div v-for="comment in pr.comments" :key="comment.id" class="p-4 rounded bg-[var(--color-surface)] border border-[var(--color-border)]">
+      <!-- Unified timeline -->
+      <div v-if="visibleTimeline.length" class="space-y-3">
+        <template v-for="item in visibleTimeline" :key="`${item.type}-${item.data.id || item.date}`">
+          <!-- Review event (approval / changes requested) -->
+          <div
+            v-if="item.type === 'review'"
+            class="p-4 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]"
+          >
             <div class="flex items-center gap-2 mb-2">
-              <span class="font-medium text-[var(--color-text)]">{{ comment.author }}</span>
-              <span class="text-xs text-[var(--color-text-muted)] ml-auto">{{ new Date(comment.created_at).toLocaleString() }}</span>
+              <span class="text-sm font-medium" style="color: var(--color-text)">{{ item.data.author }}</span>
+              <span class="text-xs px-2 py-0.5 rounded" :class="reviewStateClass(item.data.state)">
+                {{ item.data.state.replace('_', ' ') }}
+              </span>
+              <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(item.data.submitted_at) }}</span>
             </div>
-            <MarkdownContent :content="comment.body" />
+            <MarkdownContent v-if="item.data.body" :content="item.data.body" />
           </div>
-        </div>
-      </section>
+
+          <!-- Issue comment (top-level conversation) -->
+          <div
+            v-else-if="item.type === 'issue_comment'"
+            class="p-4 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]"
+          >
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-sm font-medium" style="color: var(--color-text)">{{ item.data.author }}</span>
+              <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(item.data.created_at) }}</span>
+            </div>
+            <MarkdownContent :content="item.data.body" />
+          </div>
+
+          <!-- Review thread (code review discussion) -->
+          <CommentThread
+            v-else-if="item.type === 'review_thread'"
+            :comments="toThreadComments(item.data)"
+            :resolved="item.data.is_resolved"
+            :outdated="item.data.is_outdated"
+            :path="item.data.path"
+            :line="item.data.line"
+          />
+        </template>
+      </div>
+      <p v-else class="text-sm py-4 text-center" style="color: var(--color-text-muted)">
+        No activity yet.
+      </p>
     </div>
   </div>
 </template>

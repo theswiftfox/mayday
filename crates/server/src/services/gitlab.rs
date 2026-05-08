@@ -31,8 +31,26 @@ pub struct GitLabMRDetail {
     #[serde(flatten)]
     pub mr: GitLabMR,
     pub description: Option<String>,
-    pub notes: Vec<GitLabNote>,
+    pub discussions: Vec<GitLabDiscussion>,
     pub pipelines: Vec<GitLabPipeline>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitLabDiscussion {
+    pub id: String,
+    pub individual_note: bool,
+    pub notes: Vec<GitLabDiscussionNote>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitLabDiscussionNote {
+    pub id: u64,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    pub system: bool,
+    pub resolvable: bool,
+    pub resolved: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -253,14 +271,14 @@ pub async fn fetch_mr_detail(
     let mr = parse_gitlab_mr(&mr_data, "unknown", config)
         .ok_or_else(|| AppError::ExternalApi("Failed to parse GitLab MR".to_string()))?;
 
-    // Fetch notes and pipelines in parallel
-    let (notes_resp, pipelines_resp) = tokio::join!(
+    // Fetch discussions and pipelines in parallel
+    let (discussions_resp, pipelines_resp) = tokio::join!(
         client
             .get(format!(
-                "{}/projects/{}/merge_requests/{}/notes",
+                "{}/projects/{}/merge_requests/{}/discussions",
                 base_url, project_id, iid
             ))
-            .query(&[("per_page", "50")])
+            .query(&[("per_page", "100")])
             .header("PRIVATE-TOKEN", &config.token)
             .send(),
         client
@@ -273,20 +291,41 @@ pub async fn fetch_mr_detail(
             .send(),
     );
 
-    let notes_data: Vec<Value> = notes_resp?
+    let discussions_data: Vec<Value> = discussions_resp?
         .error_for_status()
         .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
         .json()
         .await?;
 
-    let notes = notes_data
+    let discussions = discussions_data
         .iter()
-        .map(|n| GitLabNote {
-            id: n["id"].as_u64().unwrap_or(0),
-            author: n["author"]["username"].as_str().unwrap_or("").to_string(),
-            body: n["body"].as_str().unwrap_or("").to_string(),
-            created_at: n["created_at"].as_str().unwrap_or("").to_string(),
-            system: n["system"].as_bool().unwrap_or(false),
+        .map(|d| {
+            let notes = d["notes"]
+                .as_array()
+                .map(|notes| {
+                    notes
+                        .iter()
+                        .map(|n| GitLabDiscussionNote {
+                            id: n["id"].as_u64().unwrap_or(0),
+                            author: n["author"]["username"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string(),
+                            body: n["body"].as_str().unwrap_or("").to_string(),
+                            created_at: n["created_at"].as_str().unwrap_or("").to_string(),
+                            system: n["system"].as_bool().unwrap_or(false),
+                            resolvable: n["resolvable"].as_bool().unwrap_or(false),
+                            resolved: n["resolved"].as_bool().unwrap_or(false),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            GitLabDiscussion {
+                id: d["id"].as_str().unwrap_or("").to_string(),
+                individual_note: d["individual_note"].as_bool().unwrap_or(true),
+                notes,
+            }
         })
         .collect();
 
@@ -304,7 +343,7 @@ pub async fn fetch_mr_detail(
     Ok(GitLabMRDetail {
         mr,
         description: mr_data["description"].as_str().map(String::from),
-        notes,
+        discussions,
         pipelines,
     })
 }
