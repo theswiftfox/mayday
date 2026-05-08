@@ -36,7 +36,7 @@ function clearAll() {
       <!-- Roles -->
       <div>
         <span class="text-xs font-medium block mb-1.5" style="color: var(--color-text)">Role</span>
-        <label v-for="role in ['author', 'reviewer']" :key="role" class="flex items-center gap-2 py-0.5 cursor-pointer">
+        <label v-for="role in ['author', 'reviewer', 'other']" :key="role" class="flex items-center gap-2 py-0.5 cursor-pointer">
           <input type="checkbox" :checked="filter.roles.includes(role)" @change="toggleRole(role)" class="rounded" />
           <span class="text-sm capitalize" style="color: var(--color-text)">{{ role }}</span>
         </label>

@@ -33,10 +33,10 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
   /** Load dashboard prefs from the server config */
   async function load() {
     try {
-      const serverConfig = await api.getConfig()
-      if (serverConfig.dashboard) {
+      const dashboard = await api.getDashboardConfig()
+      if (dashboard && Object.keys(dashboard).length > 0) {
         // Merge with defaults so any missing fields get default values
-        config.value = { ...defaultDashboardConfig(), ...serverConfig.dashboard }
+        config.value = { ...defaultDashboardConfig(), ...dashboard }
         // Migrate old gitlab_mr/gitlab_pipeline section entries to 'gitlab'
         migrateLegacyGitlabSections()
       }
@@ -78,9 +78,7 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
   async function persist() {
     saving.value = true
     try {
-      const serverConfig = await api.getConfig()
-      serverConfig.dashboard = config.value
-      await api.updateConfig(serverConfig)
+      await api.updateDashboardConfig(config.value)
     } catch {
       // Silently fail — prefs are still in memory
     } finally {

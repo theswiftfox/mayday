@@ -49,10 +49,24 @@ pub struct GitLabConfig {
     pub host: String, // e.g., gitlab.com
     pub token: String,
     pub username: String,
+    /// Projects to monitor — stores both numeric ID (for API calls) and path (for display)
     #[serde(default)]
-    pub project_ids: Vec<u64>,
+    pub projects: Vec<GitLabProject>,
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
+}
+
+impl GitLabConfig {
+    /// Get numeric project IDs for API calls
+    pub fn numeric_project_ids(&self) -> Vec<u64> {
+        self.projects.iter().map(|p| p.id).collect()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitLabProject {
+    pub id: u64,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

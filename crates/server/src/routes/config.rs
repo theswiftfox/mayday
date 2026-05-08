@@ -6,13 +6,14 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::config::{CalendarConfig, GeneralConfig, GitHubConfig, GitLabConfig, JiraConfig};
+use crate::config::{CalendarConfig, DashboardConfig, GeneralConfig, GitHubConfig, GitLabConfig, GitLabProject, JiraConfig};
 use crate::error::AppResult;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(get_config).put(update_config))
+        .route("/dashboard", get(get_dashboard_config).put(update_dashboard_config))
 }
 
 async fn get_config(State(state): State<AppState>) -> AppResult<Json<Value>> {
@@ -38,7 +39,7 @@ async fn get_config(State(state): State<AppState>) -> AppResult<Json<Value>> {
         "gitlab": config.gitlab.as_ref().map(|c| json!({
             "host": c.host,
             "username": c.username,
-            "project_ids": c.project_ids,
+            "projects": c.projects,
             "poll_interval_secs": c.poll_interval_secs,
             "has_token": !c.token.is_empty(),
         })),
@@ -103,10 +104,17 @@ struct GitLabFormData {
     token: String,
     #[serde(default)]
     username: String,
+    /// Resolved projects with both id and path
     #[serde(default)]
-    project_ids: String, // comma-separated
+    projects: Vec<GitLabProjectForm>,
     #[serde(default = "default_poll")]
     poll_interval: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitLabProjectForm {
+    id: u64,
+    path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,10 +222,8 @@ async fn update_config(
         // Update GitLab config
         if let Some(gl) = form.gitlab {
             if !gl.host.is_empty() {
-                let project_ids: Vec<u64> = gl
-                    .project_ids
-                    .split(',')
-                    .filter_map(|s| s.trim().parse::<u64>().ok())
+                let projects: Vec<GitLabProject> = gl.projects.into_iter()
+                    .map(|p| GitLabProject { id: p.id, path: p.path })
                     .collect();
 
                 let existing_token = config
@@ -230,7 +236,7 @@ async fn update_config(
                     host: gl.host,
                     token: if gl.token.is_empty() { existing_token } else { gl.token },
                     username: gl.username,
-                    project_ids,
+                    projects,
                     poll_interval_secs: gl.poll_interval,
                 });
             }
@@ -285,6 +291,27 @@ async fn update_config(
                 theme: general.theme,
             };
         }
+    }
+
+    state.save_config().await.map_err(crate::error::AppError::Internal)?;
+
+    Ok(Json(json!({ "status": "saved" })))
+}
+
+// ---- Dashboard config endpoints ----
+
+async fn get_dashboard_config(State(state): State<AppState>) -> AppResult<Json<Value>> {
+    let config = state.config.read().await;
+    Ok(Json(serde_json::to_value(&config.dashboard).unwrap_or(json!({}))))
+}
+
+async fn update_dashboard_config(
+    State(state): State<AppState>,
+    Json(dashboard): Json<DashboardConfig>,
+) -> AppResult<Json<Value>> {
+    {
+        let mut config = state.config.write().await;
+        config.dashboard = dashboard;
     }
 
     state.save_config().await.map_err(crate::error::AppError::Internal)?;
