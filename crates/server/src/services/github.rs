@@ -41,8 +41,34 @@ pub struct GitHubPRDetail {
     #[serde(flatten)]
     pub pr: GitHubPR,
     pub body: Option<String>,
-    pub comments: Vec<GitHubComment>,
+    pub review_threads: Vec<GitHubReviewThread>,
+    pub issue_comments: Vec<GitHubIssueComment>,
     pub reviews: Vec<GitHubReview>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitHubReviewThread {
+    pub is_resolved: bool,
+    pub is_outdated: bool,
+    pub path: Option<String>,
+    pub line: Option<u64>,
+    pub comments: Vec<GitHubThreadComment>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitHubThreadComment {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitHubIssueComment {
+    pub id: u64,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -465,7 +491,7 @@ async fn fetch_other_open_prs(
     Ok(prs)
 }
 
-/// Fetch detailed PR information including comments and reviews
+/// Fetch detailed PR information including threaded comments and reviews
 pub async fn fetch_pr_detail(
     client: &Client,
     config: &GitHubConfig,
@@ -478,44 +504,78 @@ pub async fn fetch_pr_detail(
         owner, repo, number
     );
 
-    // Fetch PR details
-    let pr_resp = client
+    // Fetch PR details via REST (for consistent GitHubPR struct fields)
+    let pr_fut = client
         .get(&base_url)
         .header("Authorization", format!("Bearer {}", config.token))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?;
+        .send();
 
-    let pr_data: Value = pr_resp.json().await?;
+    // Fetch review threads + issue comments via GraphQL (for threading + resolved status)
+    let graphql_query = serde_json::json!({
+        "query": r#"
+            query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                        reviewThreads(first: 100) {
+                            nodes {
+                                isResolved
+                                isOutdated
+                                path
+                                line
+                                comments(first: 50) {
+                                    nodes {
+                                        id
+                                        author { login }
+                                        body
+                                        createdAt
+                                    }
+                                }
+                            }
+                        }
+                        comments(first: 100) {
+                            nodes {
+                                databaseId
+                                author { login }
+                                body
+                                createdAt
+                            }
+                        }
+                        reviews(first: 50) {
+                            nodes {
+                                databaseId
+                                author { login }
+                                state
+                                body
+                                submittedAt
+                            }
+                        }
+                    }
+                }
+            }
+        "#,
+        "variables": {
+            "owner": owner,
+            "repo": repo,
+            "number": number,
+        }
+    });
 
-    // Fetch comments
-    let comments_resp = client
-        .get(format!("{}/comments", base_url))
+    let graphql_fut = client
+        .post("https://api.github.com/graphql")
         .header("Authorization", format!("Bearer {}", config.token))
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await?
+        .json(&graphql_query)
+        .send();
+
+    let (pr_res, graphql_res) = tokio::join!(pr_fut, graphql_fut);
+
+    // Parse PR
+    let pr_data: Value = pr_res?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?;
-
-    let comments_data: Vec<Value> = comments_resp.json().await?;
-
-    // Fetch reviews
-    let reviews_resp = client
-        .get(format!("{}/reviews", base_url))
-        .header("Authorization", format!("Bearer {}", config.token))
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?;
-
-    let reviews_data: Vec<Value> = reviews_resp.json().await?;
+        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?
+        .json()
+        .await?;
 
     let repo_full = format!("{}/{}", owner, repo);
     let role = if pr_data["user"]["login"].as_str() == Some(&config.username) {
@@ -536,9 +596,9 @@ pub async fn fetch_pr_detail(
         created_at: pr_data["created_at"].as_str().unwrap_or("").to_string(),
         updated_at: pr_data["updated_at"].as_str().unwrap_or("").to_string(),
         role: role.to_string(),
-        has_new_comments: false, // TODO: compute in detail view too
-        has_new_commits: false,  // TODO: compute in detail view too
-        action_required: false,  // TODO: compute in detail view too
+        has_new_comments: false,
+        has_new_commits: false,
+        action_required: false,
         comment_count: pr_data["comments"].as_u64().unwrap_or(0)
             + pr_data["review_comments"].as_u64().unwrap_or(0),
         last_commit_at: None,
@@ -554,31 +614,88 @@ pub async fn fetch_pr_detail(
         ci_status: None,
     };
 
-    let comments = comments_data
-        .iter()
-        .map(|c| GitHubComment {
-            id: c["id"].as_u64().unwrap_or(0),
-            author: c["user"]["login"].as_str().unwrap_or("").to_string(),
-            body: c["body"].as_str().unwrap_or("").to_string(),
-            created_at: c["created_at"].as_str().unwrap_or("").to_string(),
-        })
-        .collect();
+    // Parse GraphQL response
+    let graphql_data: Value = graphql_res?
+        .error_for_status()
+        .map_err(|e| AppError::ExternalApi(format!("GitHub GraphQL: {}", e)))?
+        .json()
+        .await?;
 
-    let reviews = reviews_data
-        .iter()
-        .map(|r| GitHubReview {
-            id: r["id"].as_u64().unwrap_or(0),
-            author: r["user"]["login"].as_str().unwrap_or("").to_string(),
-            state: r["state"].as_str().unwrap_or("").to_string(),
-            body: r["body"].as_str().map(String::from),
-            submitted_at: r["submitted_at"].as_str().unwrap_or("").to_string(),
+    let pr_gql = &graphql_data["data"]["repository"]["pullRequest"];
+
+    // Parse review threads
+    let review_threads = pr_gql["reviewThreads"]["nodes"]
+        .as_array()
+        .map(|threads| {
+            threads
+                .iter()
+                .map(|t| GitHubReviewThread {
+                    is_resolved: t["isResolved"].as_bool().unwrap_or(false),
+                    is_outdated: t["isOutdated"].as_bool().unwrap_or(false),
+                    path: t["path"].as_str().map(String::from),
+                    line: t["line"].as_u64(),
+                    comments: t["comments"]["nodes"]
+                        .as_array()
+                        .map(|comments| {
+                            comments
+                                .iter()
+                                .map(|c| GitHubThreadComment {
+                                    id: c["id"].as_str().unwrap_or("").to_string(),
+                                    author: c["author"]["login"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    body: c["body"].as_str().unwrap_or("").to_string(),
+                                    created_at: c["createdAt"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect()
         })
-        .collect();
+        .unwrap_or_default();
+
+    // Parse issue comments (top-level conversation)
+    let issue_comments = pr_gql["comments"]["nodes"]
+        .as_array()
+        .map(|comments| {
+            comments
+                .iter()
+                .map(|c| GitHubIssueComment {
+                    id: c["databaseId"].as_u64().unwrap_or(0),
+                    author: c["author"]["login"].as_str().unwrap_or("").to_string(),
+                    body: c["body"].as_str().unwrap_or("").to_string(),
+                    created_at: c["createdAt"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Parse reviews
+    let reviews = pr_gql["reviews"]["nodes"]
+        .as_array()
+        .map(|revs| {
+            revs.iter()
+                .map(|r| GitHubReview {
+                    id: r["databaseId"].as_u64().unwrap_or(0),
+                    author: r["author"]["login"].as_str().unwrap_or("").to_string(),
+                    state: r["state"].as_str().unwrap_or("").to_string(),
+                    body: r["body"].as_str().filter(|b| !b.is_empty()).map(String::from),
+                    submitted_at: r["submittedAt"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     Ok(GitHubPRDetail {
         pr,
         body: pr_data["body"].as_str().map(String::from),
-        comments,
+        review_threads,
+        issue_comments,
         reviews,
     })
 }
