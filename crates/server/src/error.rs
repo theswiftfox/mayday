@@ -1,8 +1,4 @@
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Json,
-};
+#[cfg(feature = "http-server")]
 use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
@@ -16,15 +12,15 @@ pub enum AppError {
     #[error("Request failed: {0}")]
     Request(#[from] reqwest::Error),
 
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
-
     #[error("Internal error: {0}")]
     Internal(#[from] anyhow::Error),
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
+#[cfg(feature = "http-server")]
+impl axum::response::IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        use axum::{http::StatusCode, Json};
+
         let (status, code, message) = match &self {
             AppError::NotConfigured(msg) => {
                 (StatusCode::BAD_REQUEST, "not_configured", msg.clone())
@@ -34,9 +30,6 @@ impl IntoResponse for AppError {
             }
             AppError::Request(e) => {
                 (StatusCode::BAD_GATEWAY, "request_failed", e.to_string())
-            }
-            AppError::Database(e) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "database_error", e.to_string())
             }
             AppError::Internal(e) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", e.to_string())
