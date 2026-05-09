@@ -5,7 +5,8 @@
   "scripts": {
     "dev:web": "pnpm --filter @myday/web dev",
     "dev:desktop": "pnpm --filter @myday/desktop dev",
-    "build": "pnpm --filter @myday/shared build && pnpm --filter @myday/web build",
+    "build:web": "pnpm --filter @myday/shared build && pnpm --filter @myday/web build",
+    "build:desktop": "pnpm --filter @myday/desktop build",
     "bump": "./scripts/bump-version.sh"
   },
   "devDependencies": {
