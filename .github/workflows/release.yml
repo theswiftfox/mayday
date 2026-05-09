@@ -107,16 +107,36 @@ jobs:
           mkdir -p release-artifacts
 
           # DMG files (for direct download)
-          cp apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
-          cp apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
+          cp target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
+          cp target/x86_64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
 
           # Updater bundles (.tar.gz) and signatures (.sig)
-          cp apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
-          cp apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
-          cp apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
-          cp apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
+          cp target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
+          cp target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
+          cp target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
+          cp target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
 
           ls -la release-artifacts/
+
+          # Fail if expected artifacts are missing
+          DMG_COUNT=$(ls release-artifacts/*.dmg 2>/dev/null | wc -l)
+          BUNDLE_COUNT=$(ls release-artifacts/*.tar.gz 2>/dev/null | wc -l)
+          SIG_COUNT=$(ls release-artifacts/*.tar.gz.sig 2>/dev/null | wc -l)
+
+          if [ "$DMG_COUNT" -eq 0 ]; then
+            echo "ERROR: No DMG files found in release-artifacts/"
+            exit 1
+          fi
+          if [ "$BUNDLE_COUNT" -eq 0 ]; then
+            echo "ERROR: No updater bundles (.tar.gz) found in release-artifacts/"
+            exit 1
+          fi
+          if [ "$SIG_COUNT" -eq 0 ]; then
+            echo "ERROR: No updater signatures (.tar.gz.sig) found in release-artifacts/"
+            exit 1
+          fi
+
+          echo "Collected $DMG_COUNT DMG(s), $BUNDLE_COUNT bundle(s), $SIG_COUNT signature(s)"
 
       - name: Generate latest.json for updater
         env:
