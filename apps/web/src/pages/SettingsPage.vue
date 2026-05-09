@@ -4,10 +4,41 @@
 import { ref, onMounted, watch } from 'vue'
 import { api } from '@/lib/api'
 import { useTheme } from '@/composables/useTheme'
+import { useUpdateChecker } from '@/composables/useUpdateChecker'
 import GitHubAuthSection from '@/components/settings/GitHubAuthSection.vue'
 import CalendarAuthSection from '@/components/settings/CalendarAuthSection.vue'
 
 const { setTheme } = useTheme()
+const {
+  checking: updateChecking,
+  downloading: updateDownloading,
+  downloadProgress,
+  downloadTotal,
+  error: updateError,
+  updateAvailable,
+  updateVersion,
+  updateNotes,
+  isTauri,
+  checkForUpdate,
+  downloadAndInstall,
+  getAutoCheckEnabled,
+  setAutoCheckEnabled,
+} = useUpdateChecker()
+
+const autoCheckUpdates = ref(getAutoCheckEnabled())
+watch(autoCheckUpdates, (v) => setAutoCheckEnabled(v))
+
+const appVersion = ref('')
+onMounted(async () => {
+  if (isTauri) {
+    try {
+      const { getVersion } = await import('@tauri-apps/api/app')
+      appVersion.value = await getVersion()
+    } catch {
+      // Ignore — version not critical
+    }
+  }
+})
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -170,6 +201,64 @@ watch(() => config.value.general.theme, (newTheme) => {
             <input type="checkbox" v-model="config.general.refreshOnFocus" class="rounded" />
             Refresh on window focus
           </label>
+        </div>
+      </section>
+
+      <!-- Updates (Tauri only) -->
+      <section v-if="isTauri" class="p-5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
+        <h2 class="text-lg font-semibold text-[var(--color-text)] mb-4">Updates</h2>
+        <div class="grid gap-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <span v-if="appVersion" class="text-sm text-[var(--color-text-muted)]">
+                Current version: <span class="font-mono text-[var(--color-text)]">{{ appVersion }}</span>
+              </span>
+            </div>
+            <button
+              type="button"
+              :disabled="updateChecking || updateDownloading"
+              @click="checkForUpdate"
+              class="px-4 py-1.5 text-sm rounded border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
+            >
+              {{ updateChecking ? 'Checking...' : 'Check for updates' }}
+            </button>
+          </div>
+
+          <label class="flex items-center gap-2 text-sm text-[var(--color-text)]">
+            <input type="checkbox" v-model="autoCheckUpdates" class="rounded" />
+            Check for updates automatically on launch
+          </label>
+
+          <div v-if="updateError" class="text-red-500 bg-red-500/10 p-3 rounded text-sm">
+            {{ updateError }}
+          </div>
+
+          <div v-if="updateAvailable && !updateDownloading" class="bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 p-4 rounded">
+            <p class="text-sm font-medium text-[var(--color-text)]">
+              Version {{ updateVersion }} is available
+            </p>
+            <p v-if="updateNotes" class="text-xs text-[var(--color-text-muted)] mt-1">{{ updateNotes }}</p>
+            <button
+              type="button"
+              @click="downloadAndInstall"
+              class="mt-3 px-4 py-1.5 text-sm rounded bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)]"
+            >
+              Download and install
+            </button>
+          </div>
+
+          <div v-if="updateDownloading" class="p-4 rounded bg-[var(--color-surface-hover)]">
+            <p class="text-sm text-[var(--color-text)] mb-2">Downloading update...</p>
+            <div class="w-full bg-[var(--color-border)] rounded-full h-2">
+              <div
+                class="bg-[var(--color-primary)] h-2 rounded-full transition-all duration-300"
+                :style="{ width: downloadTotal > 0 ? `${Math.round((downloadProgress / downloadTotal) * 100)}%` : '0%' }"
+              ></div>
+            </div>
+            <p v-if="downloadTotal > 0" class="text-xs text-[var(--color-text-muted)] mt-1">
+              {{ Math.round(downloadProgress / 1024) }} / {{ Math.round(downloadTotal / 1024) }} KB
+            </p>
+          </div>
         </div>
       </section>
 
