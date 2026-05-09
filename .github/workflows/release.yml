@@ -111,10 +111,19 @@ jobs:
           cp target/x86_64-apple-darwin/release/bundle/dmg/*.dmg release-artifacts/ 2>/dev/null || true
 
           # Updater bundles (.tar.gz) and signatures (.sig)
-          cp target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
-          cp target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
-          cp target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz release-artifacts/ 2>/dev/null || true
-          cp target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz.sig release-artifacts/ 2>/dev/null || true
+          for f in target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f" .app.tar.gz)
+            cp "$f" "release-artifacts/${base}_aarch64.app.tar.gz"
+            [ -f "${f}.sig" ] && cp "${f}.sig" "release-artifacts/${base}_aarch64.app.tar.gz.sig"
+          done
+
+          for f in target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f" .app.tar.gz)
+            cp "$f" "release-artifacts/${base}_x86_64.app.tar.gz"
+            [ -f "${f}.sig" ] && cp "${f}.sig" "release-artifacts/${base}_x86_64.app.tar.gz.sig"
+          done
 
           ls -la release-artifacts/
 
@@ -143,16 +152,24 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          # Read signatures
-          AARCH64_SIG=$(cat release-artifacts/*.app_aarch64.app.tar.gz.sig 2>/dev/null || cat release-artifacts/*aarch64*.tar.gz.sig 2>/dev/null || echo "")
-          X86_64_SIG=$(cat release-artifacts/*.app_x86_64.app.tar.gz.sig 2>/dev/null || cat release-artifacts/*x86_64*.tar.gz.sig 2>/dev/null || echo "")
-
-          # Find the actual updater bundle filenames
-          AARCH64_FILE=$(basename release-artifacts/*aarch64*.tar.gz 2>/dev/null | head -1)
-          X86_64_FILE=$(basename release-artifacts/*x86_64*.tar.gz 2>/dev/null | head -1)
-
           REPO="theswiftfox/mayday"
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Find the renamed updater bundles and read their signatures
+          AARCH64_FILE=$(ls release-artifacts/*_aarch64.app.tar.gz 2>/dev/null | head -1)
+          X86_64_FILE=$(ls release-artifacts/*_x86_64.app.tar.gz 2>/dev/null | head -1)
+
+          AARCH64_SIG=""
+          X86_64_SIG=""
+          if [ -n "$AARCH64_FILE" ] && [ -f "${AARCH64_FILE}.sig" ]; then
+            AARCH64_SIG=$(cat "${AARCH64_FILE}.sig")
+          fi
+          if [ -n "$X86_64_FILE" ] && [ -f "${X86_64_FILE}.sig" ]; then
+            X86_64_SIG=$(cat "${X86_64_FILE}.sig")
+          fi
+
+          AARCH64_BASENAME=$(basename "$AARCH64_FILE")
+          X86_64_BASENAME=$(basename "$X86_64_FILE")
 
           cat > release-artifacts/latest.json << EOF
           {
@@ -162,11 +179,11 @@ jobs:
             "platforms": {
               "darwin-aarch64": {
                 "signature": "${AARCH64_SIG}",
-                "url": "https://github.com/${REPO}/releases/download/${TAG}/${AARCH64_FILE}"
+                "url": "https://github.com/${REPO}/releases/download/${TAG}/${AARCH64_BASENAME}"
               },
               "darwin-x86_64": {
                 "signature": "${X86_64_SIG}",
-                "url": "https://github.com/${REPO}/releases/download/${TAG}/${X86_64_FILE}"
+                "url": "https://github.com/${REPO}/releases/download/${TAG}/${X86_64_BASENAME}"
               }
             }
           }
