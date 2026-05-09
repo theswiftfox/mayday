@@ -1,18 +1,18 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Elena Gantner -->
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import MarkdownContent from '@/components/MarkdownContent.vue'
 
 export interface ThreadComment {
   id: string | number
   author: string
   body: string
-  created_at: string
+  createdAt: string
   /** Optional tag like "system" for GitLab system notes */
   tag?: string
   /** Optional tag color class */
-  tag_class?: string
+  tagClass?: string
 }
 
 const props = withDefaults(defineProps<{
@@ -35,6 +35,16 @@ const props = withDefaults(defineProps<{
 })
 
 const collapsed = ref(props.resolved && props.collapseResolved)
+
+// Update collapsed state when resolved status changes (e.g., thread gets resolved externally)
+watch(
+  [() => props.resolved, () => props.collapseResolved],
+  ([resolved, collapseResolved]) => {
+    if (resolved && collapseResolved) {
+      collapsed.value = true
+    }
+  },
+)
 
 function formatDate(iso: string): string {
   if (!iso) return ''
@@ -104,9 +114,9 @@ function toggle() {
           <span
             v-if="comments[0].tag"
             class="text-xs px-2 py-0.5 rounded"
-            :class="comments[0].tag_class || 'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]'"
+            :class="comments[0].tagClass || 'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]'"
           >{{ comments[0].tag }}</span>
-          <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(comments[0].created_at) }}</span>
+          <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(comments[0].createdAt) }}</span>
         </div>
         <div class="text-sm" style="color: var(--color-text)">
           <MarkdownContent :content="comments[0].body" />
@@ -126,9 +136,9 @@ function toggle() {
             <span
               v-if="reply.tag"
               class="text-xs px-2 py-0.5 rounded"
-              :class="reply.tag_class || 'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]'"
+              :class="reply.tagClass || 'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]'"
             >{{ reply.tag }}</span>
-            <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(reply.created_at) }}</span>
+            <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(reply.createdAt) }}</span>
           </div>
           <div class="text-sm" style="color: var(--color-text)">
             <MarkdownContent :content="reply.body" />

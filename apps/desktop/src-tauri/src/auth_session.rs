@@ -14,7 +14,20 @@ use objc2::sel;
 use objc2::msg_send;
 use objc2_foundation::{NSString, NSURL};
 
+use std::cell::UnsafeCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
+
+/// Guard that prevents concurrent auth sessions.
+static AUTH_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Wrapper to hold ObjC Retained objects in a static.
+/// Safety: only accessed from the main dispatch queue (single thread).
+struct MainThreadOnly(UnsafeCell<Option<(Retained<AnyObject>, Retained<AnyObject>)>>);
+unsafe impl Sync for MainThreadOnly {}
+
+static PREVIOUS_SESSION: MainThreadOnly = MainThreadOnly(UnsafeCell::new(None));
 
 /// Result holder shared between the completion block and the caller
 struct AuthResult {
@@ -44,9 +57,15 @@ unsafe fn get_presentation_context_provider() -> Retained<AnyObject> {
             _sel: objc2::runtime::Sel,
             _session: *mut AnyObject,
         ) -> *mut AnyObject {
-            // Get NSApp.keyWindow
+            // Get NSApp.keyWindow — may return nil if no window is focused,
+            // in which case fall back to mainWindow
             let app: *mut AnyObject = msg_send![AnyClass::get(c"NSApplication").unwrap(), sharedApplication];
             let window: *mut AnyObject = msg_send![app, keyWindow];
+            if window.is_null() {
+                // Fall back to mainWindow
+                let main_window: *mut AnyObject = msg_send![app, mainWindow];
+                return main_window;
+            }
             window
         }
 
@@ -66,6 +85,12 @@ unsafe fn get_presentation_context_provider() -> Retained<AnyObject> {
 /// Run an ASWebAuthenticationSession and block until it completes.
 /// Sends the result (callback URL or error) through the oneshot channel.
 pub fn run_auth_session(url_str: &str, tx: tokio::sync::oneshot::Sender<Result<String, String>>) {
+    // Prevent concurrent sessions
+    if AUTH_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        let _ = tx.send(Err("An authentication session is already in progress".to_string()));
+        return;
+    }
+
     let result = Arc::new(AuthResult {
         value: Mutex::new(None),
         condvar: Condvar::new(),
@@ -77,6 +102,10 @@ pub fn run_auth_session(url_str: &str, tx: tokio::sync::oneshot::Sender<Result<S
     // ASWebAuthenticationSession must be started from the main thread
     dispatch::Queue::main().exec_async(move || {
         unsafe {
+            // Drop the previous session objects (if any) — this releases the ObjC retain
+            let prev = &mut *PREVIOUS_SESSION.0.get();
+            *prev = None;
+
             let ns_url_str = NSString::from_str(&url_string);
             let ns_url: Option<Retained<NSURL>> = msg_send![
                 AnyClass::get(c"NSURL").unwrap(),
@@ -145,20 +174,24 @@ pub fn run_auth_session(url_str: &str, tx: tokio::sync::oneshot::Sender<Result<S
                 return;
             }
 
-            // Keep session and context alive until completion
-            std::mem::forget(session);
-            std::mem::forget(context);
+            // Store session and context so they stay alive until the next call drops them
+            let prev = &mut *PREVIOUS_SESSION.0.get();
+            *prev = Some((session, context));
         }
     });
 
-    // Wait for the result (the completion handler will signal us)
+    // Wait for the result with a timeout (5 minutes)
     let lock = result.value.lock().unwrap();
-    let lock = result
+    let (lock, timed_out) = result
         .condvar
-        .wait_while(lock, |val| val.is_none())
+        .wait_timeout_while(lock, Duration::from_secs(300), |val| val.is_none())
         .unwrap();
 
-    if let Some(val) = lock.clone() {
+    AUTH_IN_PROGRESS.store(false, Ordering::SeqCst);
+
+    if timed_out.timed_out() {
+        let _ = tx.send(Err("Authentication session timed out".to_string()));
+    } else if let Some(val) = lock.clone() {
         let _ = tx.send(val);
     }
 }

@@ -7,7 +7,10 @@ use serde_json::Value;
 use crate::config::GitLabConfig;
 use crate::error::{AppError, AppResult};
 
+use super::sanitize_host;
+
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabMR {
     pub id: u64,
     pub iid: u64,
@@ -29,6 +32,7 @@ pub struct GitLabMR {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabMRDetail {
     #[serde(flatten)]
     pub mr: GitLabMR,
@@ -38,6 +42,7 @@ pub struct GitLabMRDetail {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabDiscussion {
     pub id: String,
     pub individual_note: bool,
@@ -45,6 +50,7 @@ pub struct GitLabDiscussion {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabDiscussionNote {
     pub id: u64,
     pub author: String,
@@ -56,15 +62,7 @@ pub struct GitLabDiscussionNote {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GitLabNote {
-    pub id: u64,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-    pub system: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabPipeline {
     pub id: u64,
     pub status: String,
@@ -84,7 +82,7 @@ pub async fn fetch_mrs(client: &Client, config: &GitLabConfig) -> AppResult<Vec<
     // Fetch authored and reviewer MRs in parallel
     let (authored_resp, review_resp) = tokio::join!(
         client
-            .get(format!("{}/merge_requests", base_url))
+            .get(format!("{base_url}/merge_requests"))
             .query(&[
                 ("state", "opened"),
                 ("scope", "created_by_me"),
@@ -93,7 +91,7 @@ pub async fn fetch_mrs(client: &Client, config: &GitLabConfig) -> AppResult<Vec<
             .header("PRIVATE-TOKEN", &config.token)
             .send(),
         client
-            .get(format!("{}/merge_requests", base_url))
+            .get(format!("{base_url}/merge_requests"))
             .query(&[
                 ("state", "opened"),
                 ("scope", "all"),
@@ -108,7 +106,7 @@ pub async fn fetch_mrs(client: &Client, config: &GitLabConfig) -> AppResult<Vec<
 
     let authored: Vec<Value> = authored_resp?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {e}")))?
         .json()
         .await?;
     for mr in &authored {
@@ -119,7 +117,7 @@ pub async fn fetch_mrs(client: &Client, config: &GitLabConfig) -> AppResult<Vec<
 
     let reviewing: Vec<Value> = review_resp?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {e}")))?
         .json()
         .await?;
     for mr in &reviewing {
@@ -159,7 +157,7 @@ async fn fetch_other_open_mrs(
     let futures: Vec<_> = project_ids
         .iter()
         .map(|project_id| {
-            let url = format!("{}/projects/{}/merge_requests", base_url, project_id);
+            let url = format!("{base_url}/projects/{project_id}/merge_requests");
             let token = config.token.clone();
             async move {
                 let resp = client
@@ -217,7 +215,7 @@ pub async fn fetch_pipelines(
     let futures: Vec<_> = project_ids
         .iter()
         .map(|project_id| {
-            let url = format!("{}/projects/{}/pipelines", base_url, project_id);
+            let url = format!("{base_url}/projects/{project_id}/pipelines");
             let token = config.token.clone();
             let pid = *project_id;
             async move {
@@ -260,7 +258,7 @@ async fn discover_project_ids(client: &Client, config: &GitLabConfig) -> AppResu
     // Fetch authored and reviewer MRs in parallel to discover project IDs
     let (authored_resp, reviewer_resp) = tokio::join!(
         client
-            .get(format!("{}/merge_requests", base_url))
+            .get(format!("{base_url}/merge_requests"))
             .query(&[
                 ("state", "opened"),
                 ("scope", "created_by_me"),
@@ -269,7 +267,7 @@ async fn discover_project_ids(client: &Client, config: &GitLabConfig) -> AppResu
             .header("PRIVATE-TOKEN", &config.token)
             .send(),
         client
-            .get(format!("{}/merge_requests", base_url))
+            .get(format!("{base_url}/merge_requests"))
             .query(&[
                 ("state", "opened"),
                 ("scope", "all"),
@@ -323,14 +321,13 @@ pub async fn fetch_mr_detail(
     // Fetch MR details first (needed for parsing)
     let mr_resp = client
         .get(format!(
-            "{}/projects/{}/merge_requests/{}",
-            base_url, project_id, iid
+            "{base_url}/projects/{project_id}/merge_requests/{iid}"
         ))
         .header("PRIVATE-TOKEN", &config.token)
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {e}")))?;
 
     let mr_data: Value = mr_resp.json().await?;
 
@@ -341,16 +338,14 @@ pub async fn fetch_mr_detail(
     let (discussions_resp, pipelines_resp) = tokio::join!(
         client
             .get(format!(
-                "{}/projects/{}/merge_requests/{}/discussions",
-                base_url, project_id, iid
+                "{base_url}/projects/{project_id}/merge_requests/{iid}/discussions"
             ))
             .query(&[("per_page", "100")])
             .header("PRIVATE-TOKEN", &config.token)
             .send(),
         client
             .get(format!(
-                "{}/projects/{}/merge_requests/{}/pipelines",
-                base_url, project_id, iid
+                "{base_url}/projects/{project_id}/merge_requests/{iid}/pipelines"
             ))
             .query(&[("per_page", "5")])
             .header("PRIVATE-TOKEN", &config.token)
@@ -359,7 +354,7 @@ pub async fn fetch_mr_detail(
 
     let discussions_data: Vec<Value> = discussions_resp?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {e}")))?
         .json()
         .await?;
 
@@ -397,7 +392,7 @@ pub async fn fetch_mr_detail(
 
     let pipelines_data: Vec<Value> = pipelines_resp?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {}", e)))?
+        .map_err(|e| AppError::ExternalApi(format!("GitLab API: {e}")))?
         .json()
         .await?;
 
@@ -467,20 +462,11 @@ fn parse_gitlab_pipeline(p: &Value, project_id: u64, _config: &GitLabConfig) -> 
         url: p["web_url"].as_str().unwrap_or("").to_string(),
         project: p["project"]["path_with_namespace"]
             .as_str()
-            .unwrap_or(&format!("project/{}", project_id))
+            .unwrap_or(&format!("project/{project_id}"))
             .to_string(),
         project_id,
         created_at: p["created_at"].as_str().unwrap_or("").to_string(),
         updated_at: p["updated_at"].as_str().unwrap_or("").to_string(),
         duration: p["duration"].as_u64(),
     })
-}
-
-/// Strip protocol prefix and trailing slashes from a host string
-fn sanitize_host(host: &str) -> String {
-    host.trim()
-        .trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .trim_end_matches('/')
-        .to_string()
 }

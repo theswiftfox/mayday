@@ -13,6 +13,47 @@ async function getInvoke() {
   return _invoke
 }
 
+/** Error codes returned by the backend (both HTTP and Tauri). */
+export type ApiErrorCode =
+  | 'not_configured'
+  | 'validation_error'
+  | 'network_error'
+  | 'external_api'
+  | 'auth_failed'
+  | 'internal_error'
+  | 'unknown'
+
+/**
+ * Structured error from the API layer. Both HTTP and Tauri command errors
+ * are normalized into this shape so consumers can match on `error.code`.
+ */
+export class ApiError extends Error {
+  public readonly code: ApiErrorCode
+
+  constructor(code: ApiErrorCode, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = code
+  }
+
+  /** True if this error means the integration is not configured yet. */
+  get isNotConfigured(): boolean {
+    return this.code === 'not_configured'
+  }
+}
+
+/** Parse a Tauri command rejection into an ApiError. */
+function parseCommandError(err: unknown): ApiError {
+  if (err && typeof err === 'object' && 'code' in err && 'message' in err) {
+    const e = err as { code: string; message: string }
+    return new ApiError(e.code as ApiErrorCode, e.message)
+  }
+  if (typeof err === 'string') {
+    return new ApiError('unknown', err)
+  }
+  return new ApiError('unknown', String(err))
+}
+
 class ApiClient {
   private baseUrl: string
 
@@ -30,8 +71,9 @@ class ApiClient {
     })
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-      throw new Error(error.error || `HTTP ${response.status}`)
+      const body = await response.json().catch(() => ({ error: 'Unknown error' }))
+      const code = (body.code as ApiErrorCode) || 'unknown'
+      throw new ApiError(code, body.error || body.message || `HTTP ${response.status}`)
     }
 
     return response.json()
@@ -39,12 +81,16 @@ class ApiClient {
 
   private async cmd<T>(command: string, args?: Record<string, any>): Promise<T> {
     const invoke = await getInvoke()
-    return invoke(command, args)
+    try {
+      return await invoke(command, args)
+    } catch (err) {
+      throw parseCommandError(err)
+    }
   }
 
   // Dashboard
   async getDashboard() {
-    type R = { items: Array<{ type: string; data: any }>; errors: Array<{ source: string; message: string }>; last_updated: string }
+    type R = { items: Array<{ type: string; data: any }>; errors: Array<{ source: string; message: string }>; lastUpdated: string }
     if (isTauri) return this.cmd<R>('get_dashboard')
     return this.request<R>('/dashboard')
   }
@@ -73,20 +119,20 @@ class ApiClient {
   }
 
   async startGitHubDeviceCode(clientId: string) {
-    type R = { device_code: string; user_code: string; verification_uri: string; expires_in: number; interval: number }
-    if (isTauri) return this.cmd<R>('start_github_device_code', { request: { client_id: clientId } })
+    type R = { deviceCode: string; userCode: string; verificationUri: string; expiresIn: number; interval: number }
+    if (isTauri) return this.cmd<R>('start_github_device_code', { request: { clientId } })
     return this.request<R>('/github/auth/device-code/start', {
       method: 'POST',
-      body: JSON.stringify({ client_id: clientId }),
+      body: JSON.stringify({ clientId }),
     })
   }
 
   async pollGitHubDeviceCode(clientId: string, deviceCode: string) {
     type R = { status: string; username?: string }
-    if (isTauri) return this.cmd<R>('poll_github_device_code', { request: { client_id: clientId, device_code: deviceCode } })
+    if (isTauri) return this.cmd<R>('poll_github_device_code', { request: { clientId, deviceCode } })
     return this.request<R>('/github/auth/device-code/poll', {
       method: 'POST',
-      body: JSON.stringify({ client_id: clientId, device_code: deviceCode }),
+      body: JSON.stringify({ clientId, deviceCode }),
     })
   }
 
@@ -132,7 +178,7 @@ class ApiClient {
   }
 
   async startCalendarAuth(source?: string, flow?: string) {
-    type R = { auth_url: string; source: string; flow: string }
+    type R = { authUrl: string; source: string; flow: string }
     if (isTauri) return this.cmd<R>('start_calendar_auth', { request: { source: source || 'ews', flow: flow || 'manual' } })
     return this.request<R>('/calendar/auth/start', {
       method: 'POST',
@@ -146,7 +192,7 @@ class ApiClient {
   }
 
   async startCalendarDeviceCode(source?: string) {
-    type R = { user_code: string; verification_uri: string; expires_in: number; interval: number }
+    type R = { userCode: string; verificationUri: string; expiresIn: number; interval: number }
     if (isTauri) return this.cmd<R>('start_calendar_device_code', { request: { source: source || 'ews' } })
     return this.request<R>('/calendar/auth/device-code/start', {
       method: 'POST',
@@ -162,10 +208,10 @@ class ApiClient {
 
   async exchangeCalendarCode(code: string, redirectUri?: string) {
     type R = { status: string }
-    if (isTauri) return this.cmd<R>('exchange_calendar_code', { request: { code, redirect_uri: redirectUri } })
+    if (isTauri) return this.cmd<R>('exchange_calendar_code', { request: { code, redirectUri } })
     return this.request<R>('/calendar/auth/exchange-code', {
       method: 'POST',
-      body: JSON.stringify({ code, redirect_uri: redirectUri }),
+      body: JSON.stringify({ code, redirectUri }),
     })
   }
 

@@ -3,16 +3,17 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/lib/api'
+import type {
+  DashboardItem,
+  IntegrationError,
+  GitHubPR,
+  JiraTicket,
+  GitLabMR,
+  GitLabPipeline,
+  CalendarEvent,
+} from '@/types/api'
 
-export interface DashboardItem {
-  type: 'github_pr' | 'jira_ticket' | 'gitlab_mr' | 'gitlab_pipeline' | 'calendar_event'
-  data: any
-}
-
-export interface IntegrationError {
-  source: string
-  message: string
-}
+export type { DashboardItem, IntegrationError }
 
 const CACHE_KEY = 'myday_dashboard_cache'
 
@@ -47,22 +48,28 @@ export const useDashboardStore = defineStore('dashboard', () => {
   // True during background refreshes (existing data stays visible)
   const refreshing = ref(false)
 
-  // Computed: items by type
-  const githubPRs = computed(() =>
-    items.value.filter((i) => i.type === 'github_pr').map((i) => i.data)
-  )
-  const jiraTickets = computed(() =>
-    items.value.filter((i) => i.type === 'jira_ticket').map((i) => i.data)
-  )
-  const gitlabMRs = computed(() =>
-    items.value.filter((i) => i.type === 'gitlab_mr').map((i) => i.data)
-  )
-  const gitlabPipelines = computed(() =>
-    items.value.filter((i) => i.type === 'gitlab_pipeline').map((i) => i.data)
-  )
-  const calendarEvents = computed(() =>
-    items.value.filter((i) => i.type === 'calendar_event').map((i) => i.data)
-  )
+  // Computed: group items by type in a single pass
+  const grouped = computed(() => {
+    const groups = {
+      github_pr: [] as GitHubPR[],
+      jira_ticket: [] as JiraTicket[],
+      gitlab_mr: [] as GitLabMR[],
+      gitlab_pipeline: [] as GitLabPipeline[],
+      calendar_event: [] as CalendarEvent[],
+    }
+    for (const item of items.value) {
+      if (item.type in groups) {
+        (groups[item.type] as any[]).push(item.data)
+      }
+    }
+    return groups
+  })
+
+  const githubPRs = computed(() => grouped.value.github_pr)
+  const jiraTickets = computed(() => grouped.value.jira_ticket)
+  const gitlabMRs = computed(() => grouped.value.gitlab_mr)
+  const gitlabPipelines = computed(() => grouped.value.gitlab_pipeline)
+  const calendarEvents = computed(() => grouped.value.calendar_event)
   // Pre-filtered pipelines for dashboard (non-success only)
   const failedPipelines = computed(() =>
     gitlabPipelines.value.filter((p) => p.status !== 'success')
@@ -80,7 +87,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       const response = await api.getDashboard()
       items.value = response.items as DashboardItem[]
       errors.value = response.errors
-      lastUpdated.value = response.last_updated
+      lastUpdated.value = response.lastUpdated
       saveToCache(items.value, lastUpdated.value)
     } catch (e: any) {
       errors.value = [{ source: 'app', message: e.message }]

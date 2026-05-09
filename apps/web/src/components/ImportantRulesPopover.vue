@@ -31,35 +31,35 @@ const ruleGroups: RuleGroup[] = [
   {
     label: 'GitHub PRs',
     rules: [
-      { key: 'github_action_required', label: 'Action required' },
-      { key: 'github_new_comments', label: 'New comments' },
-      { key: 'github_new_commits', label: 'New commits' },
-      { key: 'github_changes_requested', label: 'Changes requested' },
+      { key: 'githubActionRequired', label: 'Action required' },
+      { key: 'githubNewComments', label: 'New comments' },
+      { key: 'githubNewCommits', label: 'New commits' },
+      { key: 'githubChangesRequested', label: 'Changes requested' },
     ],
   },
   {
     label: 'GitLab MRs',
     rules: [
-      { key: 'gitlab_mr_new_comments', label: 'New comments' },
-      { key: 'gitlab_mr_new_commits', label: 'New commits' },
+      { key: 'gitlabMrNewComments', label: 'New comments' },
+      { key: 'gitlabMrNewCommits', label: 'New commits' },
     ],
   },
   {
     label: 'GitLab Pipelines',
     rules: [
-      { key: 'gitlab_pipeline_failed', label: 'Failed pipelines' },
+      { key: 'gitlabPipelineFailed', label: 'Failed pipelines' },
     ],
   },
   {
     label: 'JIRA Tickets',
     rules: [
-      { key: 'jira_high_priority', label: 'High/Critical priority' },
+      { key: 'jiraHighPriority', label: 'High/Critical priority' },
     ],
   },
   {
     label: 'Calendar',
     rules: [
-      { key: 'calendar_starting_soon', label: 'Starting within 15 min' },
+      { key: 'calendarStartingSoon', label: 'Starting within 15 min' },
     ],
   },
 ]

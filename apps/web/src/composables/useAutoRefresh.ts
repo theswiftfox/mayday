@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Elena Gantner
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useWindowFocus } from '@vueuse/core'
 
 /**
@@ -25,6 +25,8 @@ export function useAutoRefresh(
     }
   }
 
+  let stopFocusWatcher: (() => void) | null = null
+
   onMounted(() => {
     // Initial fetch
     refresh()
@@ -33,26 +35,29 @@ export function useAutoRefresh(
     if (intervalMs > 0) {
       intervalId = setInterval(refresh, intervalMs)
     }
-  })
 
-  onUnmounted(() => {
-    if (intervalId) {
-      clearInterval(intervalId)
-    }
-  })
-
-  // Watch for focus changes
-  if (refreshOnFocus) {
-    let wasUnfocused = false
-    import('vue').then(({ watch }) => {
-      watch(focused, (isFocused) => {
+    // Watch for focus changes
+    if (refreshOnFocus) {
+      let wasUnfocused = false
+      stopFocusWatcher = watch(focused, (isFocused) => {
         if (isFocused && wasUnfocused) {
           refresh()
         }
         wasUnfocused = !isFocused
       })
-    })
-  }
+    }
+  })
+
+  onUnmounted(() => {
+    if (intervalId) {
+      clearInterval(intervalId)
+      intervalId = null
+    }
+    if (stopFocusWatcher) {
+      stopFocusWatcher()
+      stopFocusWatcher = null
+    }
+  })
 
   return { refresh, isRefreshing }
 }

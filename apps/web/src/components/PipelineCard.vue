@@ -3,20 +3,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useDashboardPrefsStore } from '@/stores/dashboardPrefs'
+import { useNow } from '@/composables/useNow'
 
 interface Pipeline {
   id: number
   status: string
-  ref_name: string
+  refName: string
   url: string
   project: string
   duration?: number
-  created_at: string
+  createdAt: string
 }
 
 const props = defineProps<{ pipeline: Pipeline; showPin?: boolean }>()
 
 const prefs = useDashboardPrefsStore()
+const now = useNow(60_000)
 const pinned = computed(() => prefs.isPinned('gitlab_pipeline', props.pipeline))
 
 function togglePin(e: Event) {
@@ -53,7 +55,7 @@ const formattedDuration = computed(() => {
 })
 
 const timeAgo = computed(() => {
-  const diff = Date.now() - new Date(props.pipeline.created_at).getTime()
+  const diff = now.value - new Date(props.pipeline.createdAt).getTime()
   const mins = Math.floor(diff / 60000)
   if (mins < 60) return `${mins}m ago`
   const hrs = Math.floor(mins / 60)
@@ -65,7 +67,7 @@ const timeAgo = computed(() => {
 <template>
   <a
     :href="pipeline.url"
-    target="_blank"
+    target="_blank" rel="noopener noreferrer"
     class="group block p-4 rounded-lg border transition-all hover:shadow-sm"
     style="background: var(--color-surface); border-color: var(--color-border)"
     @mouseenter="($event.currentTarget as HTMLElement).style.background = 'var(--color-surface-hover)'"
@@ -95,7 +97,7 @@ const timeAgo = computed(() => {
     </div>
 
     <!-- Branch + project -->
-    <div class="text-sm font-medium font-mono mb-2" style="color: var(--color-text)">{{ pipeline.ref_name }}</div>
+    <div class="text-sm font-medium font-mono mb-2" style="color: var(--color-text)">{{ pipeline.refName }}</div>
     <div class="text-xs" style="color: var(--color-text-muted)">{{ pipeline.project }}</div>
 
     <!-- Duration -->

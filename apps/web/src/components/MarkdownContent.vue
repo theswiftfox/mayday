@@ -2,21 +2,19 @@
 <!-- SPDX-FileCopyrightText: 2026 Elena Gantner -->
 <script setup lang="ts">
 import { computed } from 'vue'
-import { marked } from 'marked'
+import { Marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 const props = defineProps<{
   content: string
 }>()
 
-// Configure marked for GitHub-flavored markdown
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-})
+// Use a local Marked instance to avoid mutating global config
+const md = new Marked({ gfm: true, breaks: true })
 
 const renderedHtml = computed(() => {
   if (!props.content) return ''
-  return marked.parse(props.content) as string
+  return DOMPurify.sanitize(md.parse(props.content) as string)
 })
 </script>
 

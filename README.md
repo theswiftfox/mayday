@@ -23,6 +23,10 @@ In dev mode, Tauri loads the frontend from Vite's dev server (`:5173`) with hot 
 The desktop app uses Tauri IPC commands instead of the HTTP server -- the `myday-server` crate
 is used as a library for its service layer, not as a running web server.
 
+(i) Note: the server mode using axum is mostly due to the original plan being having a seperate server
+deployment and a slim frontend only. However due to how EWS integration etc. works, this project is now
+fully focussed on the tauri app using commands and the axum layer only kept around as 'legacy'.
+
 ## Build
 
 ```bash

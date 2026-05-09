@@ -10,20 +10,20 @@ interface MR {
   title: string
   url: string
   project: string
-  project_id: number
-  role: 'author' | 'reviewer'
-  has_new_comments: boolean
-  has_new_commits: boolean
+  projectId: number
+  role: 'author' | 'reviewer' | 'other'
+  hasNewComments: boolean
+  hasNewCommits: boolean
   labels?: string[]
-  is_draft: boolean
-  merge_status?: string
+  isDraft: boolean
+  mergeStatus?: string
 }
 
 const props = defineProps<{ mr: MR; showPin?: boolean }>()
 
 const prefs = useDashboardPrefsStore()
 
-const route = computed(() => `/gitlab/${props.mr.project_id}/${props.mr.iid}`)
+const route = computed(() => `/gitlab/${props.mr.projectId}/${props.mr.iid}`)
 const pinned = computed(() => prefs.isPinned('gitlab_mr', props.mr))
 
 function togglePin(e: Event) {
@@ -33,10 +33,10 @@ function togglePin(e: Event) {
 }
 
 const mergeIcon = computed(() => {
-  if (!props.mr.merge_status) return null
-  return props.mr.merge_status === 'can_be_merged'
+  if (!props.mr.mergeStatus) return null
+  return props.mr.mergeStatus === 'can_be_merged'
     ? { icon: '✓', color: 'var(--color-success)', label: 'Ready to merge' }
-    : { icon: '⚠', color: 'var(--color-warning)', label: props.mr.merge_status }
+    : { icon: '⚠', color: 'var(--color-warning)', label: props.mr.mergeStatus }
 })
 </script>
 
@@ -65,10 +65,10 @@ const mergeIcon = computed(() => {
             <path v-else stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
           </svg>
         </button>
-        <span v-if="mr.has_new_comments" class="w-2 h-2 rounded-full" style="background: var(--color-primary)" title="New comments" />
-        <span v-if="mr.has_new_commits" class="w-2 h-2 rounded-full" style="background: var(--color-success)" title="New commits" />
+        <span v-if="mr.hasNewComments" class="w-2 h-2 rounded-full" style="background: var(--color-primary)" title="New comments" />
+        <span v-if="mr.hasNewCommits" class="w-2 h-2 rounded-full" style="background: var(--color-success)" title="New commits" />
         <span v-if="mergeIcon" class="text-sm font-bold" :style="{ color: mergeIcon.color }" :title="mergeIcon.label">{{ mergeIcon.icon }}</span>
-        <a :href="mr.url" target="_blank" @click.stop title="Open on GitLab" class="ml-1 opacity-0 group-hover:opacity-100 transition-opacity" style="color: var(--color-text-muted)">
+        <a :href="mr.url" target="_blank" rel="noopener noreferrer" @click.stop title="Open on GitLab" class="ml-1 opacity-0 group-hover:opacity-100 transition-opacity" style="color: var(--color-text-muted)">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" /><path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" /></svg>
         </a>
       </div>
@@ -85,7 +85,7 @@ const mergeIcon = computed(() => {
           background: mr.role === 'author' ? 'var(--color-primary)' : 'var(--color-warning)'
         }"
       >{{ mr.role }}</span>
-      <span v-if="mr.is_draft" class="text-xs px-2 py-0.5 rounded-full" style="background: var(--color-surface-hover); color: var(--color-text-muted)">draft</span>
+      <span v-if="mr.isDraft" class="text-xs px-2 py-0.5 rounded-full" style="background: var(--color-surface-hover); color: var(--color-text-muted)">draft</span>
       <span
         v-for="label in (mr.labels || []).slice(0, 2)"
         :key="label"

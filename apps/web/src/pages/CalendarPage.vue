@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { useDashboardPrefsStore } from '@/stores/dashboardPrefs'
 import { useFilteredCalendarEvents } from '@/composables/useFilteredItems'
 import { useImportantItems } from '@/composables/useImportantItems'
+import { useNow } from '@/composables/useNow'
 import CalendarEventFilterPopover from '@/components/CalendarEventFilterPopover.vue'
 
 const events = ref<any[]>([])
@@ -26,14 +27,16 @@ onMounted(async () => {
 })
 
 // Apply shared filters
-const filtered = useFilteredCalendarEvents(events, computed(() => prefs.filters.calendar_event))
+const filtered = useFilteredCalendarEvents(events, computed(() => prefs.filters.calendarEvent))
 
 // Split into important + rest
+const now = useNow()
 const split = useImportantItems(
   filtered,
   'calendar_event',
   computed(() => prefs.importantRules),
-  computed(() => prefs.pinnedItems)
+  computed(() => prefs.pinnedItems),
+  now
 )
 
 const importantEvents = computed(() => split.value.important)
@@ -78,8 +81,8 @@ function togglePin(event: any) {
             <div class="absolute left-3 top-2 w-3 h-3 rounded-full border-2" style="background: var(--color-warning); border-color: var(--color-background)"></div>
             <div class="p-4 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
               <div class="flex items-center gap-3 mb-2">
-                <span v-if="event.is_all_day" class="text-sm font-mono text-[var(--color-primary)]">All day</span>
-                <span v-else class="text-sm font-mono text-[var(--color-primary)]">{{ formatTime(event.start_time) }} &ndash; {{ formatTime(event.end_time) }}</span>
+                <span v-if="event.isAllDay" class="text-sm font-mono text-[var(--color-primary)]">All day</span>
+                <span v-else class="text-sm font-mono text-[var(--color-primary)]">{{ formatTime(event.startTime) }} &ndash; {{ formatTime(event.endTime) }}</span>
                 <button
                   @click="togglePin(event)"
                   class="ml-auto p-0.5 rounded transition-colors"
@@ -94,7 +97,7 @@ function togglePin(event: any) {
               <h3 class="text-lg font-medium text-[var(--color-text)] mb-1">{{ event.subject }}</h3>
               <p v-if="event.organizer" class="text-sm text-[var(--color-text-muted)] mb-2">Organizer: {{ event.organizer }}</p>
               <p v-if="event.location" class="text-sm text-[var(--color-text-muted)] mb-2">{{ event.location }}</p>
-              <a v-if="event.online_url" :href="event.online_url" target="_blank" class="inline-block text-sm text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]">Join Meeting &nearr;</a>
+              <a v-if="event.onlineUrl" :href="event.onlineUrl" target="_blank" rel="noopener noreferrer" class="inline-block text-sm text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]">Join Meeting &nearr;</a>
             </div>
           </div>
         </div>
@@ -107,8 +110,8 @@ function togglePin(event: any) {
           <div class="absolute left-3 top-2 w-3 h-3 rounded-full bg-[var(--color-primary)] border-2 border-[var(--color-background)]"></div>
           <div class="p-4 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] group">
             <div class="flex items-center gap-3 mb-2">
-              <span v-if="event.is_all_day" class="text-sm font-mono text-[var(--color-primary)]">All day</span>
-              <span v-else class="text-sm font-mono text-[var(--color-primary)]">{{ formatTime(event.start_time) }} &ndash; {{ formatTime(event.end_time) }}</span>
+              <span v-if="event.isAllDay" class="text-sm font-mono text-[var(--color-primary)]">All day</span>
+              <span v-else class="text-sm font-mono text-[var(--color-primary)]">{{ formatTime(event.startTime) }} &ndash; {{ formatTime(event.endTime) }}</span>
               <button
                 @click="togglePin(event)"
                 class="ml-auto p-0.5 rounded transition-colors opacity-0 group-hover:opacity-100"
@@ -123,7 +126,7 @@ function togglePin(event: any) {
             <h3 class="text-lg font-medium text-[var(--color-text)] mb-1">{{ event.subject }}</h3>
             <p v-if="event.organizer" class="text-sm text-[var(--color-text-muted)] mb-2">Organizer: {{ event.organizer }}</p>
             <p v-if="event.location" class="text-sm text-[var(--color-text-muted)] mb-2">{{ event.location }}</p>
-            <a v-if="event.online_url" :href="event.online_url" target="_blank" class="inline-block text-sm text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]">Join Meeting &nearr;</a>
+            <a v-if="event.onlineUrl" :href="event.onlineUrl" target="_blank" rel="noopener noreferrer" class="inline-block text-sm text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]">Join Meeting &nearr;</a>
           </div>
         </div>
       </div>

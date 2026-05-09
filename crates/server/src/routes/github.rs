@@ -6,9 +6,10 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
+use crate::responses::{AuthResult, DataResponse, DeviceCodePollResponse, GhDeviceCodeStartResponse};
 use crate::services;
 use crate::state::AppState;
 
@@ -35,7 +36,8 @@ async fn list_prs(State(state): State<AppState>) -> AppResult<Json<Value>> {
         .ok_or_else(|| AppError::NotConfigured("github".to_string()))?;
 
     let prs = services::github::fetch_prs(&state.http_client, gh_config).await?;
-    let response = json!({ "data": prs });
+    let response =
+        serde_json::to_value(DataResponse { data: &prs }).map_err(|e| AppError::Internal(e.into()))?;
     state.api_cache.insert(cache_key, response.clone()).await;
     Ok(Json(response))
 }
@@ -44,27 +46,34 @@ async fn get_pr_detail(
     State(state): State<AppState>,
     Path((owner, repo, number)): Path<(String, String, u64)>,
 ) -> AppResult<Json<Value>> {
-    let config = state.config.read().await;
-    let gh_config = config
-        .github
-        .as_ref()
-        .ok_or_else(|| AppError::NotConfigured("github".to_string()))?;
+    let gh_config = {
+        let config = state.config.read().await;
+        config
+            .github
+            .clone()
+            .ok_or_else(|| AppError::NotConfigured("github".to_string()))?
+    };
 
     let detail = services::github::fetch_pr_detail(
         &state.http_client,
-        gh_config,
+        &gh_config,
         &owner,
         &repo,
         number,
     )
     .await?;
 
-    Ok(Json(json!({ "data": detail })))
+    Ok(Json(
+        serde_json::to_value(DataResponse { data: &detail }).map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }
 
 /// Attempt to detect and use the existing `gh` CLI token
 async fn detect_gh_cli(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    match services::github::detect_gh_cli_token() {
+    let detected = tokio::task::spawn_blocking(services::github::detect_gh_cli_token)
+        .await
+        .unwrap_or(None);
+    match detected {
         Some((token, username)) => {
             // Verify the token works and get username if empty
             let actual_username = if username.is_empty() {
@@ -89,17 +98,20 @@ async fn detect_gh_cli(State(state): State<AppState>) -> AppResult<Json<Value>> 
                 gh_config.token_source = "gh_cli".to_string();
             }
             state.save_config().await.map_err(crate::error::AppError::Internal)?;
+            state.api_cache.invalidate_all();
 
-            Ok(Json(json!({
-                "success": true,
-                "username": actual_username,
-                "source": "gh_cli",
-            })))
+            Ok(Json(
+                serde_json::to_value(AuthResult {
+                    success: true,
+                    username: actual_username,
+                    source: "gh_cli".to_string(),
+                })
+                .map_err(|e| AppError::Internal(e.into()))?,
+            ))
         }
-        None => Ok(Json(json!({
-            "success": false,
-            "message": "gh CLI not found or not authenticated. Run `gh auth login` first, or use the device code flow.",
-        }))),
+        None => Err(crate::error::AppError::NotConfigured(
+            "gh CLI not found or not authenticated. Run `gh auth login` first, or use the device code flow.".to_string()
+        )),
     }
 }
 
@@ -115,10 +127,9 @@ async fn use_manual_token(
 ) -> AppResult<Json<Value>> {
     let token = body.token.trim().to_string();
     if token.is_empty() {
-        return Ok(Json(json!({
-            "success": false,
-            "message": "Token cannot be empty.",
-        })));
+        return Err(crate::error::AppError::NotConfigured(
+            "Token cannot be empty.".to_string()
+        ));
     }
 
     let username = services::github::fetch_authenticated_user(&state.http_client, &token).await?;
@@ -138,15 +149,20 @@ async fn use_manual_token(
         gh_config.token_source = "manual".to_string();
     }
     state.save_config().await.map_err(crate::error::AppError::Internal)?;
+    state.api_cache.invalidate_all();
 
-    Ok(Json(json!({
-        "success": true,
-        "username": username,
-        "source": "manual",
-    })))
+    Ok(Json(
+        serde_json::to_value(AuthResult {
+            success: true,
+            username,
+            source: "manual".to_string(),
+        })
+        .map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DeviceCodeStartRequest {
     client_id: String,
 }
@@ -159,16 +175,14 @@ async fn start_device_code(
     let device_code =
         services::github::start_device_code_flow(&state.http_client, &body.client_id).await?;
 
-    Ok(Json(json!({
-        "device_code": device_code.device_code,
-        "user_code": device_code.user_code,
-        "verification_uri": device_code.verification_uri,
-        "expires_in": device_code.expires_in,
-        "interval": device_code.interval,
-    })))
+    Ok(Json(
+        serde_json::to_value(GhDeviceCodeStartResponse::from(&device_code))
+            .map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DeviceCodePollRequest {
     client_id: String,
     device_code: String,
@@ -212,14 +226,24 @@ async fn poll_device_code(
                 gh_config.oauth_client_id = Some(body.client_id);
             }
             state.save_config().await.map_err(crate::error::AppError::Internal)?;
+            state.api_cache.invalidate_all();
 
-            Ok(Json(json!({
-                "status": "complete",
-                "username": username,
-            })))
+            Ok(Json(
+                serde_json::to_value(DeviceCodePollResponse {
+                    status: "complete".to_string(),
+                    username: Some(username),
+                    error: None,
+                })
+                .map_err(|e| AppError::Internal(e.into()))?,
+            ))
         }
-        None => Ok(Json(json!({
-            "status": "pending",
-        }))),
+        None => Ok(Json(
+            serde_json::to_value(DeviceCodePollResponse {
+                status: "pending".to_string(),
+                username: None,
+                error: None,
+            })
+            .map_err(|e| AppError::Internal(e.into()))?,
+        )),
     }
 }

@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { useDashboardPrefsStore } from '@/stores/dashboardPrefs'
 import { useFilteredJiraTickets } from '@/composables/useFilteredItems'
 import { useImportantItems } from '@/composables/useImportantItems'
+import { useNow } from '@/composables/useNow'
 import TicketCard from '@/components/TicketCard.vue'
 import JiraTicketFilterPopover from '@/components/JiraTicketFilterPopover.vue'
 
@@ -27,22 +28,24 @@ onMounted(async () => {
 })
 
 // Apply shared filters
-const filtered = useFilteredJiraTickets(tickets, computed(() => prefs.filters.jira_ticket))
+const filtered = useFilteredJiraTickets(tickets, computed(() => prefs.filters.jiraTicket))
 
 // Split into important + rest
+const now = useNow()
 const split = useImportantItems(
   filtered,
   'jira_ticket',
   computed(() => prefs.importantRules),
-  computed(() => prefs.pinnedItems)
+  computed(() => prefs.pinnedItems),
+  now
 )
 
 const importantTickets = computed(() => split.value.important)
 const restTickets = computed(() => split.value.rest)
 
-const inProgress = computed(() => restTickets.value.filter(t => t.status_category === 'in_progress'))
-const todo = computed(() => restTickets.value.filter(t => t.status_category === 'todo'))
-const other = computed(() => restTickets.value.filter(t => !['in_progress', 'todo'].includes(t.status_category)))
+const inProgress = computed(() => restTickets.value.filter(t => t.statusCategory === 'in_progress'))
+const todo = computed(() => restTickets.value.filter(t => t.statusCategory === 'todo'))
+const other = computed(() => restTickets.value.filter(t => !['in_progress', 'todo'].includes(t.statusCategory)))
 </script>
 
 <template>

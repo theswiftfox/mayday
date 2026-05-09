@@ -7,13 +7,13 @@ import { useDashboardPrefsStore } from '@/stores/dashboardPrefs'
 interface Meeting {
   id?: string
   subject: string
-  start_time: string
-  end_time: string
-  is_online: boolean
-  online_url?: string
+  startTime: string
+  endTime: string
+  isOnline: boolean
+  onlineUrl?: string
   location?: string
   organizer?: string
-  is_all_day?: boolean
+  isAllDay?: boolean
 }
 
 const props = defineProps<{ meeting: Meeting; showPin?: boolean }>()
@@ -41,10 +41,10 @@ function formatTime(iso: string): string {
   >
     <!-- Time column -->
     <div class="shrink-0 w-14 text-right">
-      <div v-if="meeting.is_all_day" class="text-xs font-medium" style="color: var(--color-text-muted)">All day</div>
+      <div v-if="meeting.isAllDay" class="text-xs font-medium" style="color: var(--color-text-muted)">All day</div>
       <template v-else>
-        <div class="text-sm font-medium font-mono" style="color: var(--color-text)">{{ formatTime(meeting.start_time) }}</div>
-        <div class="text-xs font-mono" style="color: var(--color-text-muted)">{{ formatTime(meeting.end_time) }}</div>
+        <div class="text-sm font-medium font-mono" style="color: var(--color-text)">{{ formatTime(meeting.startTime) }}</div>
+        <div class="text-xs font-mono" style="color: var(--color-text-muted)">{{ formatTime(meeting.endTime) }}</div>
       </template>
     </div>
 
@@ -63,9 +63,9 @@ function formatTime(iso: string): string {
 
     <!-- Join button -->
     <a
-      v-if="meeting.is_online && meeting.online_url"
-      :href="meeting.online_url"
-      target="_blank"
+      v-if="meeting.isOnline && meeting.onlineUrl"
+      :href="meeting.onlineUrl"
+      target="_blank" rel="noopener noreferrer"
       class="shrink-0 text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
       style="background: var(--color-primary); color: white"
       @click.stop

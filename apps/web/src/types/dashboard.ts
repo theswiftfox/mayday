@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Elena Gantner
 // Dashboard customization types — mirrors Rust DashboardConfig in config.rs
+// Field names use camelCase to match `#[serde(rename_all = "camelCase")]`.
+// String VALUES (section type identifiers, discriminators) stay snake_case.
 
 export type SectionType =
   | 'important'
@@ -26,48 +28,48 @@ export const SECTION_LABELS: Record<SectionType, string> = {
 }
 
 export interface DashboardConfig {
-  section_order: SectionType[]
-  visible_sections: SectionType[]
-  calendar_layout: 'sidebar' | 'inline'
-  important_rules: ImportantRules
-  pinned_items: PinnedItem[]
+  sectionOrder: SectionType[]
+  visibleSections: SectionType[]
+  calendarLayout: 'sidebar' | 'inline'
+  importantRules: ImportantRules
+  pinnedItems: PinnedItem[]
   filters: DashboardFilters
 }
 
 export interface ImportantRules {
-  github_action_required: boolean
-  github_new_comments: boolean
-  github_new_commits: boolean
-  github_changes_requested: boolean
-  gitlab_mr_new_comments: boolean
-  gitlab_mr_new_commits: boolean
-  gitlab_pipeline_failed: boolean
-  jira_high_priority: boolean
-  calendar_starting_soon: boolean
+  githubActionRequired: boolean
+  githubNewComments: boolean
+  githubNewCommits: boolean
+  githubChangesRequested: boolean
+  gitlabMrNewComments: boolean
+  gitlabMrNewCommits: boolean
+  gitlabPipelineFailed: boolean
+  jiraHighPriority: boolean
+  calendarStartingSoon: boolean
 }
 
 export interface PinnedItem {
-  item_type: string
-  item_id: string
+  itemType: string
+  itemId: string
 }
 
 export interface DashboardFilters {
-  github_pr: GitHubPRFilter
-  gitlab_mr: GitLabMRFilter
-  gitlab_pipeline: GitLabPipelineFilter
-  jira_ticket: JiraTicketFilter
-  calendar_event: CalendarEventFilter
+  githubPr: GitHubPRFilter
+  gitlabMr: GitLabMRFilter
+  gitlabPipeline: GitLabPipelineFilter
+  jiraTicket: JiraTicketFilter
+  calendarEvent: CalendarEventFilter
 }
 
 export interface GitHubPRFilter {
   roles: string[]
-  hide_drafts: boolean
-  action_required_only: boolean
+  hideDrafts: boolean
+  actionRequiredOnly: boolean
 }
 
 export interface GitLabMRFilter {
   roles: string[]
-  hide_drafts: boolean
+  hideDrafts: boolean
 }
 
 export interface GitLabPipelineFilter {
@@ -75,14 +77,14 @@ export interface GitLabPipelineFilter {
 }
 
 export interface JiraTicketFilter {
-  status_categories: string[]
+  statusCategories: string[]
   priorities: string[]
-  issue_types: string[]
+  issueTypes: string[]
 }
 
 export interface CalendarEventFilter {
-  hide_all_day: boolean
-  online_only: boolean
+  hideAllDay: boolean
+  onlineOnly: boolean
 }
 
 // Item ID helpers — used for pinning
@@ -92,7 +94,7 @@ export function getItemId(itemType: string, item: any): string {
     case 'github_pr':
       return `${item.repo}#${item.number}`
     case 'gitlab_mr':
-      return `${item.project_id}!${item.iid}`
+      return `${item.projectId}!${item.iid}`
     case 'gitlab_pipeline':
       return String(item.id)
     case 'jira_ticket':
@@ -106,27 +108,27 @@ export function getItemId(itemType: string, item: any): string {
 
 export function defaultDashboardConfig(): DashboardConfig {
   return {
-    section_order: [...ALL_SECTIONS],
-    visible_sections: [...ALL_SECTIONS],
-    calendar_layout: 'sidebar',
-    important_rules: {
-      github_action_required: false,
-      github_new_comments: false,
-      github_new_commits: false,
-      github_changes_requested: false,
-      gitlab_mr_new_comments: false,
-      gitlab_mr_new_commits: false,
-      gitlab_pipeline_failed: false,
-      jira_high_priority: false,
-      calendar_starting_soon: false,
+    sectionOrder: [...ALL_SECTIONS],
+    visibleSections: [...ALL_SECTIONS],
+    calendarLayout: 'sidebar',
+    importantRules: {
+      githubActionRequired: false,
+      githubNewComments: false,
+      githubNewCommits: false,
+      githubChangesRequested: false,
+      gitlabMrNewComments: false,
+      gitlabMrNewCommits: false,
+      gitlabPipelineFailed: false,
+      jiraHighPriority: false,
+      calendarStartingSoon: false,
     },
-    pinned_items: [],
+    pinnedItems: [],
     filters: {
-      github_pr: { roles: [], hide_drafts: false, action_required_only: false },
-      gitlab_mr: { roles: [], hide_drafts: false },
-      gitlab_pipeline: { statuses: [] },
-      jira_ticket: { status_categories: [], priorities: [], issue_types: [] },
-      calendar_event: { hide_all_day: false, online_only: false },
+      githubPr: { roles: [], hideDrafts: false, actionRequiredOnly: false },
+      gitlabMr: { roles: [], hideDrafts: false },
+      gitlabPipeline: { statuses: [] },
+      jiraTicket: { statusCategories: [], priorities: [], issueTypes: [] },
+      calendarEvent: { hideAllDay: false, onlineOnly: false },
     },
   }
 }

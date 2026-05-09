@@ -7,7 +7,7 @@ import FilterPopover from './FilterPopover.vue'
 import { hasActiveFilter } from '@/composables/useFilteredItems'
 
 const prefs = useDashboardPrefsStore()
-const filter = computed(() => prefs.filters.github_pr)
+const filter = computed(() => prefs.filters.githubPr)
 const active = computed(() => hasActiveFilter('github_pr', prefs.filters))
 
 function toggleRole(role: string) {
@@ -19,15 +19,15 @@ function toggleRole(role: string) {
 }
 
 function toggleHideDrafts() {
-  prefs.updateGitHubPRFilter({ hide_drafts: !filter.value.hide_drafts })
+  prefs.updateGitHubPRFilter({ hideDrafts: !filter.value.hideDrafts })
 }
 
 function toggleActionRequired() {
-  prefs.updateGitHubPRFilter({ action_required_only: !filter.value.action_required_only })
+  prefs.updateGitHubPRFilter({ actionRequiredOnly: !filter.value.actionRequiredOnly })
 }
 
 function clearAll() {
-  prefs.updateGitHubPRFilter({ roles: [], hide_drafts: false, action_required_only: false })
+  prefs.updateGitHubPRFilter({ roles: [], hideDrafts: false, actionRequiredOnly: false })
 }
 </script>
 
@@ -51,11 +51,11 @@ function clearAll() {
       <!-- Toggles -->
       <div class="space-y-1.5">
         <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" :checked="filter.hide_drafts" @change="toggleHideDrafts" class="rounded" />
+          <input type="checkbox" :checked="filter.hideDrafts" @change="toggleHideDrafts" class="rounded" />
           <span class="text-sm" style="color: var(--color-text)">Hide drafts</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" :checked="filter.action_required_only" @change="toggleActionRequired" class="rounded" />
+          <input type="checkbox" :checked="filter.actionRequiredOnly" @change="toggleActionRequired" class="rounded" />
           <span class="text-sm" style="color: var(--color-text)">Action required only</span>
         </label>
       </div>

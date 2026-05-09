@@ -6,9 +6,10 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
+use crate::responses::{DataResponse, ResolvedGitLabProject};
 use crate::services;
 use crate::state::AppState;
 
@@ -33,7 +34,8 @@ async fn list_mrs(State(state): State<AppState>) -> AppResult<Json<Value>> {
         .ok_or_else(|| AppError::NotConfigured("gitlab".to_string()))?;
 
     let mrs = services::gitlab::fetch_mrs(&state.http_client, gl_config).await?;
-    let response = json!({ "data": mrs });
+    let response =
+        serde_json::to_value(DataResponse { data: &mrs }).map_err(|e| AppError::Internal(e.into()))?;
     state.api_cache.insert(cache_key, response.clone()).await;
     Ok(Json(response))
 }
@@ -42,21 +44,25 @@ async fn get_mr_detail(
     State(state): State<AppState>,
     Path((project_id, iid)): Path<(u64, u64)>,
 ) -> AppResult<Json<Value>> {
-    let config = state.config.read().await;
-    let gl_config = config
-        .gitlab
-        .as_ref()
-        .ok_or_else(|| AppError::NotConfigured("gitlab".to_string()))?;
+    let gl_config = {
+        let config = state.config.read().await;
+        config
+            .gitlab
+            .clone()
+            .ok_or_else(|| AppError::NotConfigured("gitlab".to_string()))?
+    };
 
     let detail = services::gitlab::fetch_mr_detail(
         &state.http_client,
-        gl_config,
+        &gl_config,
         project_id,
         iid,
     )
     .await?;
 
-    Ok(Json(json!({ "data": detail })))
+    Ok(Json(
+        serde_json::to_value(DataResponse { data: &detail }).map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }
 
 async fn list_pipelines(State(state): State<AppState>) -> AppResult<Json<Value>> {
@@ -72,7 +78,8 @@ async fn list_pipelines(State(state): State<AppState>) -> AppResult<Json<Value>>
         .ok_or_else(|| AppError::NotConfigured("gitlab".to_string()))?;
 
     let pipelines = services::gitlab::fetch_pipelines(&state.http_client, gl_config).await?;
-    let response = json!({ "data": pipelines });
+    let response =
+        serde_json::to_value(DataResponse { data: &pipelines }).map_err(|e| AppError::Internal(e.into()))?;
     state.api_cache.insert(cache_key, response.clone()).await;
     Ok(Json(response))
 }
@@ -113,7 +120,7 @@ async fn resolve_project(
 
     // URL-encode the project path for the API call
     let encoded_path = urlencoding::encode(&req.path);
-    let url = format!("https://{}/api/v4/projects/{}", host, encoded_path);
+    let url = format!("https://{host}/api/v4/projects/{encoded_path}");
 
     let resp = state
         .http_client
@@ -140,8 +147,11 @@ async fn resolve_project(
         .unwrap_or(&req.path)
         .to_string();
 
-    Ok(Json(json!({
-        "id": id,
-        "path": path_with_namespace,
-    })))
+    Ok(Json(
+        serde_json::to_value(ResolvedGitLabProject {
+            id,
+            path: path_with_namespace,
+        })
+        .map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }

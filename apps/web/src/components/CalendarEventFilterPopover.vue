@@ -7,19 +7,19 @@ import FilterPopover from './FilterPopover.vue'
 import { hasActiveFilter } from '@/composables/useFilteredItems'
 
 const prefs = useDashboardPrefsStore()
-const filter = computed(() => prefs.filters.calendar_event)
+const filter = computed(() => prefs.filters.calendarEvent)
 const active = computed(() => hasActiveFilter('calendar_event', prefs.filters))
 
 function toggleHideAllDay() {
-  prefs.updateCalendarEventFilter({ hide_all_day: !filter.value.hide_all_day })
+  prefs.updateCalendarEventFilter({ hideAllDay: !filter.value.hideAllDay })
 }
 
 function toggleOnlineOnly() {
-  prefs.updateCalendarEventFilter({ online_only: !filter.value.online_only })
+  prefs.updateCalendarEventFilter({ onlineOnly: !filter.value.onlineOnly })
 }
 
 function clearAll() {
-  prefs.updateCalendarEventFilter({ hide_all_day: false, online_only: false })
+  prefs.updateCalendarEventFilter({ hideAllDay: false, onlineOnly: false })
 }
 </script>
 
@@ -33,11 +33,11 @@ function clearAll() {
 
       <div class="space-y-1.5">
         <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" :checked="filter.hide_all_day" @change="toggleHideAllDay" class="rounded" />
+          <input type="checkbox" :checked="filter.hideAllDay" @change="toggleHideAllDay" class="rounded" />
           <span class="text-sm" style="color: var(--color-text)">Hide all-day events</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" :checked="filter.online_only" @change="toggleOnlineOnly" class="rounded" />
+          <input type="checkbox" :checked="filter.onlineOnly" @change="toggleOnlineOnly" class="rounded" />
           <span class="text-sm" style="color: var(--color-text)">Online meetings only</span>
         </label>
       </div>

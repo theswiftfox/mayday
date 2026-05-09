@@ -6,11 +6,20 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::config::{CalendarConfig, DashboardConfig, GeneralConfig, GitHubConfig, GitLabConfig, GitLabProject, JiraConfig};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
+use crate::responses::{
+    MaskedCalendarConfig, MaskedConfig, MaskedGitHubConfig, MaskedGitLabConfig, MaskedJiraConfig,
+    StatusResponse,
+};
 use crate::state::AppState;
+
+/// Clamp poll interval to a safe range (30s to 3600s).
+fn clamp_poll_interval(secs: u64) -> u64 {
+    secs.clamp(30, 3600)
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -21,47 +30,22 @@ pub fn router() -> Router<AppState> {
 async fn get_config(State(state): State<AppState>) -> AppResult<Json<Value>> {
     let config = state.config.read().await;
 
-    // Return config with secrets masked
-    let masked = json!({
-        "github": config.github.as_ref().map(|c| json!({
-            "username": c.username,
-            "repos": c.repos,
-            "poll_interval_secs": c.poll_interval_secs,
-            "has_token": !c.token.is_empty(),
-            "oauth_client_id": c.oauth_client_id,
-            "token_source": c.token_source,
-        })),
-        "jira": config.jira.as_ref().map(|c| json!({
-            "host": c.host,
-            "email": c.email,
-            "project_keys": c.project_keys,
-            "poll_interval_secs": c.poll_interval_secs,
-            "has_token": !c.api_token.is_empty(),
-        })),
-        "gitlab": config.gitlab.as_ref().map(|c| json!({
-            "host": c.host,
-            "username": c.username,
-            "projects": c.projects,
-            "poll_interval_secs": c.poll_interval_secs,
-            "has_token": !c.token.is_empty(),
-        })),
-        "calendar": config.calendar.as_ref().map(|c| json!({
-            "source": c.source,
-            "ics_url": c.ics_url,
-            "ms_client_id": c.ms_client_id,
-            "ms_tenant_id": c.ms_tenant_id,
-            "ms_redirect_uri": c.ms_redirect_uri,
-            "has_ms_refresh_token": c.ms_refresh_token.is_some(),
-            "poll_interval_secs": c.poll_interval_secs,
-        })),
-        "general": config.general,
-    });
+    let masked = MaskedConfig {
+        github: config.github.as_ref().map(MaskedGitHubConfig::from),
+        jira: config.jira.as_ref().map(MaskedJiraConfig::from),
+        gitlab: config.gitlab.as_ref().map(MaskedGitLabConfig::from),
+        calendar: config.calendar.as_ref().map(MaskedCalendarConfig::from),
+        general: config.general.clone(),
+    };
 
-    Ok(Json(masked))
+    Ok(Json(
+        serde_json::to_value(masked).map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }
 
 /// The shape the frontend sends when saving settings
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UpdateConfigRequest {
     github: Option<GitHubFormData>,
     jira: Option<JiraFormData>,
@@ -71,6 +55,7 @@ struct UpdateConfigRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GitHubFormData {
     #[serde(default)]
     token: String,
@@ -85,6 +70,7 @@ struct GitHubFormData {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct JiraFormData {
     #[serde(default)]
     host: String,
@@ -99,6 +85,7 @@ struct JiraFormData {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GitLabFormData {
     #[serde(default)]
     host: String,
@@ -114,12 +101,14 @@ struct GitLabFormData {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GitLabProjectForm {
     id: u64,
     path: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CalendarFormData {
     #[serde(default)]
     source: String,
@@ -136,6 +125,7 @@ struct CalendarFormData {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GeneralFormData {
     #[serde(default = "default_theme")]
     theme: String,
@@ -185,7 +175,7 @@ async fn update_config(
                 token: if gh.token.is_empty() { existing.token } else { gh.token },
                 username: if gh.username.is_empty() { existing.username } else { gh.username },
                 repos,
-                poll_interval_secs: gh.poll_interval,
+                poll_interval_secs: clamp_poll_interval(gh.poll_interval),
                 oauth_client_id: if gh.oauth_client_id.is_empty() {
                     existing.oauth_client_id
                 } else {
@@ -216,7 +206,7 @@ async fn update_config(
                     email: jira.email,
                     api_token: if jira.api_token.is_empty() { existing_token } else { jira.api_token },
                     project_keys,
-                    poll_interval_secs: jira.poll_interval,
+                    poll_interval_secs: clamp_poll_interval(jira.poll_interval),
                 });
             }
         }
@@ -239,7 +229,7 @@ async fn update_config(
                     token: if gl.token.is_empty() { existing_token } else { gl.token },
                     username: gl.username,
                     projects,
-                    poll_interval_secs: gl.poll_interval,
+                    poll_interval_secs: clamp_poll_interval(gl.poll_interval),
                 });
             }
         }
@@ -282,7 +272,7 @@ async fn update_config(
                 } else {
                     Some(cal.ms_redirect_uri)
                 },
-                poll_interval_secs: cal.poll_interval,
+                poll_interval_secs: clamp_poll_interval(cal.poll_interval),
             });
         }
 
@@ -296,21 +286,60 @@ async fn update_config(
     }
 
     state.save_config().await.map_err(crate::error::AppError::Internal)?;
+    state.api_cache.invalidate_all();
 
-    Ok(Json(json!({ "status": "saved" })))
+    Ok(Json(
+        serde_json::to_value(StatusResponse { status: "saved".to_string() })
+            .map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }
 
 // ---- Dashboard config endpoints ----
 
 async fn get_dashboard_config(State(state): State<AppState>) -> AppResult<Json<Value>> {
     let config = state.config.read().await;
-    Ok(Json(serde_json::to_value(&config.dashboard).unwrap_or(json!({}))))
+    Ok(Json(
+        serde_json::to_value(&config.dashboard).map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }
 
 async fn update_dashboard_config(
     State(state): State<AppState>,
     Json(dashboard): Json<DashboardConfig>,
 ) -> AppResult<Json<Value>> {
+    // Validate calendar layout
+    if !["sidebar", "inline"].contains(&dashboard.calendar_layout.as_str()) {
+        return Err(AppError::Validation(format!(
+            "Invalid calendar layout: {}",
+            dashboard.calendar_layout
+        )));
+    }
+
+    // Validate section types
+    const VALID_SECTIONS: &[&str] = &[
+        "important",
+        "github_pr",
+        "gitlab",
+        "gitlab_mr",
+        "gitlab_pipeline",
+        "jira_ticket",
+        "calendar_event",
+    ];
+    for section in &dashboard.section_order {
+        if !VALID_SECTIONS.contains(&section.as_str()) {
+            return Err(AppError::Validation(format!(
+                "Invalid section type: {section}"
+            )));
+        }
+    }
+    for section in &dashboard.visible_sections {
+        if !VALID_SECTIONS.contains(&section.as_str()) {
+            return Err(AppError::Validation(format!(
+                "Invalid section type: {section}"
+            )));
+        }
+    }
+
     {
         let mut config = state.config.write().await;
         config.dashboard = dashboard;
@@ -318,5 +347,8 @@ async fn update_dashboard_config(
 
     state.save_config().await.map_err(crate::error::AppError::Internal)?;
 
-    Ok(Json(json!({ "status": "saved" })))
+    Ok(Json(
+        serde_json::to_value(StatusResponse { status: "saved".to_string() })
+            .map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }

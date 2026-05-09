@@ -14,7 +14,16 @@ use crate::error::{AppError, AppResult};
 /// Max concurrent enrichment requests to avoid GitHub secondary rate limits
 const MAX_CONCURRENT_ENRICHMENTS: usize = 5;
 
+/// Sanitize a GitHub username: only allow alphanumeric characters and hyphens.
+fn sanitize_github_username(username: &str) -> String {
+    username
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-')
+        .collect()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubPR {
     pub id: u64,
     pub number: u64,
@@ -39,6 +48,7 @@ pub struct GitHubPR {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubPRDetail {
     #[serde(flatten)]
     pub pr: GitHubPR,
@@ -49,6 +59,7 @@ pub struct GitHubPRDetail {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubReviewThread {
     pub is_resolved: bool,
     pub is_outdated: bool,
@@ -58,6 +69,7 @@ pub struct GitHubReviewThread {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubThreadComment {
     pub id: String,
     pub author: String,
@@ -66,6 +78,7 @@ pub struct GitHubThreadComment {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubIssueComment {
     pub id: u64,
     pub author: String,
@@ -74,14 +87,7 @@ pub struct GitHubIssueComment {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GitHubComment {
-    pub id: u64,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubReview {
     pub id: u64,
     pub author: String,
@@ -120,7 +126,7 @@ pub async fn fetch_prs(client: &Client, config: &GitHubConfig) -> AppResult<Vec<
             let client = client.clone();
             let config = config.clone();
             async move {
-                let _permit = sem.acquire().await.unwrap();
+                let _permit = sem.acquire().await.map_err(|_| AppError::Internal(anyhow::anyhow!("semaphore closed")))?;
                 enrich_pr_action_required(&client, &config, pr).await
             }
         })
@@ -135,6 +141,90 @@ pub async fn fetch_prs(client: &Client, config: &GitHubConfig) -> AppResult<Vec<
 }
 
 /// Enrich a single PR with action_required by fetching commits and comments
+/// Find the authenticated user's latest commit date from a list of commits.
+fn find_my_last_commit_date(commits: &[Value], username: &str) -> Option<String> {
+    commits
+        .iter()
+        .rev()
+        .find(|c| {
+            c["author"]["login"].as_str() == Some(username)
+                || c["committer"]["login"].as_str() == Some(username)
+        })
+        .and_then(|c| c["commit"]["committer"]["date"].as_str())
+        .map(String::from)
+}
+
+/// Find the latest activity date (review or comment) by the authenticated user.
+fn find_my_last_activity_date<'a>(
+    reviews: &'a [Value],
+    comments: &'a [Value],
+    username: &str,
+) -> Option<String> {
+    reviews
+        .iter()
+        .filter(|r| r["user"]["login"].as_str() == Some(username))
+        .filter_map(|r| r["submitted_at"].as_str())
+        .chain(
+            comments
+                .iter()
+                .filter(|c| c["user"]["login"].as_str() == Some(username))
+                .filter_map(|c| c["created_at"].as_str()),
+        )
+        .max()
+        .map(String::from)
+}
+
+/// Check if there are comments/reviews from others newer than a reference date.
+fn has_newer_feedback(
+    comments: &[Value],
+    reviews: &[Value],
+    username: &str,
+    since: &str,
+) -> bool {
+    let has_newer_comment = comments.iter().any(|c| {
+        let is_other = c["user"]["login"].as_str() != Some(username);
+        let comment_date = c["created_at"].as_str().unwrap_or("");
+        is_other && comment_date > since
+    });
+    let has_newer_review = reviews.iter().any(|r| {
+        let is_other = r["user"]["login"].as_str() != Some(username);
+        let review_date = r["submitted_at"].as_str().unwrap_or("");
+        let is_substantive = r["state"].as_str() != Some("PENDING");
+        is_other && is_substantive && review_date > since
+    });
+    has_newer_comment || has_newer_review
+}
+
+/// Derive overall CI status from GitHub check runs.
+fn derive_ci_status(check_runs: &[Value]) -> Option<String> {
+    if check_runs.is_empty() {
+        return None;
+    }
+
+    let mut has_failure = false;
+    let mut has_pending = false;
+
+    for run in check_runs {
+        let status = run["status"].as_str().unwrap_or("");
+        let conclusion = run["conclusion"].as_str().unwrap_or("");
+
+        if status == "in_progress" || status == "queued" || status == "pending" {
+            has_pending = true;
+        } else if conclusion == "failure" || conclusion == "timed_out" || conclusion == "cancelled"
+        {
+            has_failure = true;
+        }
+    }
+
+    Some(if has_failure {
+        "failure".to_string()
+    } else if has_pending {
+        "pending".to_string()
+    } else {
+        "success".to_string()
+    })
+}
+
 async fn enrich_pr_action_required(
     client: &Client,
     config: &GitHubConfig,
@@ -150,23 +240,23 @@ async fn enrich_pr_action_required(
         owner, repo, pr.number
     );
 
-    // Fetch commits, comments, reviews, and check-runs ALL in parallel
+    // Fetch commits, comments, reviews ALL in parallel
     let commits_fut = client
-        .get(format!("{}/commits?per_page=100", base_url))
+        .get(format!("{base_url}/commits?per_page=100"))
         .header("Authorization", format!("Bearer {}", config.token))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send();
 
     let comments_fut = client
-        .get(format!("{}/comments?per_page=100", base_url))
+        .get(format!("{base_url}/comments?per_page=100"))
         .header("Authorization", format!("Bearer {}", config.token))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send();
 
     let reviews_fut = client
-        .get(format!("{}/reviews?per_page=100", base_url))
+        .get(format!("{base_url}/reviews?per_page=100"))
         .header("Authorization", format!("Bearer {}", config.token))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
@@ -175,38 +265,36 @@ async fn enrich_pr_action_required(
     let (commits_res, comments_res, reviews_res) =
         tokio::join!(commits_fut, comments_fut, reviews_fut);
 
-    // Parse commits - get the latest commit date and head SHA
+    // Parse responses
     let commits: Vec<Value> = match commits_res {
         Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
         _ => vec![],
     };
 
-    let head_sha = commits.last().and_then(|c| c["sha"].as_str()).map(String::from);
+    let comments: Vec<Value> = match comments_res {
+        Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
+        _ => vec![],
+    };
 
+    let reviews: Vec<Value> = match reviews_res {
+        Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
+        _ => vec![],
+    };
+
+    let head_sha = commits.last().and_then(|c| c["sha"].as_str()).map(String::from);
     let last_commit_at = commits
         .last()
         .and_then(|c| c["commit"]["committer"]["date"].as_str())
         .map(String::from);
-
-    // For author role: find the last commit by the author
-    let my_last_commit_at = commits
-        .iter()
-        .rev()
-        .find(|c| {
-            c["author"]["login"].as_str() == Some(&config.username)
-                || c["committer"]["login"].as_str() == Some(&config.username)
-        })
-        .and_then(|c| c["commit"]["committer"]["date"].as_str())
-        .map(String::from);
+    let my_last_commit_at = find_my_last_commit_date(&commits, &config.username);
 
     pr.last_commit_at = last_commit_at.clone();
 
-    // Fetch CI status from check runs for the head commit (fires immediately, awaited later)
+    // Fetch CI status for the head commit (fires concurrently with processing below)
     let check_runs_fut = if let Some(ref sha) = head_sha {
         let fut = client
             .get(format!(
-                "https://api.github.com/repos/{}/{}/commits/{}/check-runs",
-                owner, repo, sha
+                "https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs"
             ))
             .header("Authorization", format!("Bearer {}", config.token))
             .header("Accept", "application/vnd.github+json")
@@ -217,23 +305,9 @@ async fn enrich_pr_action_required(
         None
     };
 
-    // Parse review comments (inline comments on diffs)
-    let comments: Vec<Value> = match comments_res {
-        Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
-        _ => vec![],
-    };
-
-    // Parse reviews (approve/request changes/comment reviews)
-    let reviews: Vec<Value> = match reviews_res {
-        Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
-        _ => vec![],
-    };
-
     // Compute action_required based on role
     pr.action_required = match pr.role.as_str() {
-        // Never action required for draft PRs
         _ if pr.is_draft => false,
-        // Never action required for reviewer when changes are requested (ball is in author's court)
         "reviewer"
             if pr.labels.iter().any(|l| {
                 let lower = l.to_ascii_lowercase();
@@ -243,132 +317,49 @@ async fn enrich_pr_action_required(
             false
         }
         "author" => {
-            // Action required if there are comments from others newer than my last commit
-            if let Some(ref my_commit_date) = my_last_commit_at {
-                let has_newer_comment = comments.iter().any(|c| {
-                    let is_other = c["user"]["login"].as_str() != Some(&config.username);
-                    let comment_date = c["created_at"].as_str().unwrap_or("");
-                    is_other && comment_date > my_commit_date.as_str()
-                });
-                let has_newer_review = reviews.iter().any(|r| {
-                    let is_other = r["user"]["login"].as_str() != Some(&config.username);
-                    let review_date = r["submitted_at"].as_str().unwrap_or("");
-                    let is_substantive = r["state"].as_str() != Some("PENDING");
-                    is_other && is_substantive && review_date > my_commit_date.as_str()
-                });
-                has_newer_comment || has_newer_review
-            } else {
-                false
-            }
+            my_last_commit_at
+                .as_deref()
+                .map(|d| has_newer_feedback(&comments, &reviews, &config.username, d))
+                .unwrap_or(false)
         }
         "reviewer" => {
-            // Action required if there are new commits since my last comment/review
-            let my_last_activity = reviews
-                .iter()
-                .filter(|r| r["user"]["login"].as_str() == Some(&config.username))
-                .filter_map(|r| r["submitted_at"].as_str())
-                .chain(
-                    comments
-                        .iter()
-                        .filter(|c| c["user"]["login"].as_str() == Some(&config.username))
-                        .filter_map(|c| c["created_at"].as_str()),
-                )
-                .max()
-                .map(String::from);
-
-            if let (Some(ref latest_commit), Some(ref my_activity)) =
-                (&last_commit_at, &my_last_activity)
-            {
-                latest_commit.as_str() > my_activity.as_str()
-            } else {
-                // If reviewer has never commented, action is required
-                my_last_activity.is_none()
+            let my_last_activity = find_my_last_activity_date(&reviews, &comments, &config.username);
+            match (&last_commit_at, &my_last_activity) {
+                (Some(latest_commit), Some(my_activity)) => latest_commit.as_str() > my_activity.as_str(),
+                (_, None) => true, // Never commented → action required
+                _ => false,
             }
         }
         _ => false,
     };
 
-    // Also update has_new_comments/has_new_commits based on the same data
-    pr.has_new_comments = match pr.role.as_str() {
-        "author" => {
-            if let Some(ref my_commit_date) = my_last_commit_at {
-                comments.iter().any(|c| {
-                    c["user"]["login"].as_str() != Some(&config.username)
-                        && c["created_at"].as_str().unwrap_or("") > my_commit_date.as_str()
-                }) || reviews.iter().any(|r| {
-                    r["user"]["login"].as_str() != Some(&config.username)
-                        && r["submitted_at"].as_str().unwrap_or("") > my_commit_date.as_str()
-                        && r["state"].as_str() != Some("PENDING")
-                })
-            } else {
-                false
-            }
-        }
-        _ => false,
+    // Compute has_new_comments / has_new_commits
+    pr.has_new_comments = if pr.role == "author" {
+        my_last_commit_at
+            .as_deref()
+            .map(|d| has_newer_feedback(&comments, &reviews, &config.username, d))
+            .unwrap_or(false)
+    } else {
+        false
     };
 
-    pr.has_new_commits = match pr.role.as_str() {
-        "reviewer" => {
-            let my_last_activity = reviews
-                .iter()
-                .filter(|r| r["user"]["login"].as_str() == Some(&config.username))
-                .filter_map(|r| r["submitted_at"].as_str())
-                .chain(
-                    comments
-                        .iter()
-                        .filter(|c| c["user"]["login"].as_str() == Some(&config.username))
-                        .filter_map(|c| c["created_at"].as_str()),
-                )
-                .max();
-
-            if let (Some(latest_commit), Some(my_activity)) = (&last_commit_at, my_last_activity) {
-                latest_commit.as_str() > my_activity
-            } else {
-                false
-            }
+    pr.has_new_commits = if pr.role == "reviewer" {
+        let my_last_activity = find_my_last_activity_date(&reviews, &comments, &config.username);
+        match (&last_commit_at, my_last_activity.as_deref()) {
+            (Some(latest_commit), Some(my_activity)) => latest_commit.as_str() > my_activity,
+            _ => false,
         }
-        _ => false,
+    } else {
+        false
     };
 
-    // Await the check-runs response (was fired earlier, concurrently with comment/review parsing)
+    // Await the check-runs response
     if let Some(check_fut) = check_runs_fut {
         if let Ok(resp) = check_fut.await {
             if resp.status().is_success() {
                 let body: Value = resp.json().await.unwrap_or_default();
-                let check_runs = body["check_runs"].as_array();
-                if let Some(runs) = check_runs {
-                    if !runs.is_empty() {
-                        // Derive overall status:
-                        // - any failure/timed_out/cancelled → "failure"
-                        // - any in_progress/queued/pending → "pending"
-                        // - all success/neutral/skipped → "success"
-                        let mut has_failure = false;
-                        let mut has_pending = false;
-
-                        for run in runs {
-                            let status = run["status"].as_str().unwrap_or("");
-                            let conclusion = run["conclusion"].as_str().unwrap_or("");
-
-                            if status == "in_progress" || status == "queued" || status == "pending"
-                            {
-                                has_pending = true;
-                            } else if conclusion == "failure"
-                                || conclusion == "timed_out"
-                                || conclusion == "cancelled"
-                            {
-                                has_failure = true;
-                            }
-                            // neutral/skipped/success all count as passing
-                        }
-
-                        pr.ci_status = Some(if has_failure {
-                            "failure".to_string()
-                        } else if has_pending {
-                            "pending".to_string()
-                        } else {
-                            "success".to_string()
-                        });
-                    }
+                if let Some(runs) = body["check_runs"].as_array() {
+                    pr.ci_status = derive_ci_status(runs);
                 }
             }
         }
@@ -378,9 +369,9 @@ async fn enrich_pr_action_required(
 }
 
 async fn fetch_authored_prs(client: &Client, config: &GitHubConfig) -> AppResult<Vec<GitHubPR>> {
+    let username = sanitize_github_username(&config.username);
     let query = format!(
-        "is:pr is:open author:{} archived:false",
-        config.username
+        "is:pr is:open author:{username} archived:false"
     );
 
     let resp = client
@@ -392,7 +383,7 @@ async fn fetch_authored_prs(client: &Client, config: &GitHubConfig) -> AppResult
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {e}")))?;
 
     let body: Value = resp.json().await?;
     let empty = vec![];
@@ -402,7 +393,7 @@ async fn fetch_authored_prs(client: &Client, config: &GitHubConfig) -> AppResult
     for item in items {
         if let Some(pr) = parse_search_result(item, &config.username, "author") {
             // Apply repo filter if configured
-            if config.repos.is_empty() || config.repos.iter().any(|r| pr.repo == *r) {
+            if config.repos.is_empty() || config.repos.contains(&pr.repo) {
                 prs.push(pr);
             }
         }
@@ -415,9 +406,9 @@ async fn fetch_review_requested_prs(
     client: &Client,
     config: &GitHubConfig,
 ) -> AppResult<Vec<GitHubPR>> {
+    let username = sanitize_github_username(&config.username);
     let query = format!(
-        "is:pr is:open review-requested:{} archived:false",
-        config.username
+        "is:pr is:open review-requested:{username} archived:false"
     );
 
     let resp = client
@@ -429,7 +420,7 @@ async fn fetch_review_requested_prs(
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {e}")))?;
 
     let body: Value = resp.json().await?;
     let empty = vec![];
@@ -438,7 +429,7 @@ async fn fetch_review_requested_prs(
     let mut prs = Vec::new();
     for item in items {
         if let Some(pr) = parse_search_result(item, &config.username, "reviewer") {
-            if config.repos.is_empty() || config.repos.iter().any(|r| pr.repo == *r) {
+            if config.repos.is_empty() || config.repos.contains(&pr.repo) {
                 prs.push(pr);
             }
         }
@@ -459,7 +450,7 @@ async fn fetch_other_open_prs(
     }
 
     // Build a search query: open PRs in the configured repos
-    let repo_filter: Vec<String> = config.repos.iter().map(|r| format!("repo:{}", r)).collect();
+    let repo_filter: Vec<String> = config.repos.iter().map(|r| format!("repo:{r}")).collect();
     let query = format!("is:pr is:open {}", repo_filter.join(" "));
 
     let resp = client
@@ -471,7 +462,7 @@ async fn fetch_other_open_prs(
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {e}")))?;
 
     let body: Value = resp.json().await?;
     let empty = vec![];
@@ -502,8 +493,7 @@ pub async fn fetch_pr_detail(
     number: u64,
 ) -> AppResult<GitHubPRDetail> {
     let base_url = format!(
-        "https://api.github.com/repos/{}/{}/pulls/{}",
-        owner, repo, number
+        "https://api.github.com/repos/{owner}/{repo}/pulls/{number}"
     );
 
     // Fetch PR details via REST (for consistent GitHubPR struct fields)
@@ -575,11 +565,11 @@ pub async fn fetch_pr_detail(
     // Parse PR
     let pr_data: Value = pr_res?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?
+        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {e}")))?
         .json()
         .await?;
 
-    let repo_full = format!("{}/{}", owner, repo);
+    let repo_full = format!("{owner}/{repo}");
     let role = if pr_data["user"]["login"].as_str() == Some(&config.username) {
         "author"
     } else {
@@ -619,7 +609,7 @@ pub async fn fetch_pr_detail(
     // Parse GraphQL response
     let graphql_data: Value = graphql_res?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub GraphQL: {}", e)))?
+        .map_err(|e| AppError::ExternalApi(format!("GitHub GraphQL: {e}")))?
         .json()
         .await?;
 
@@ -745,6 +735,7 @@ fn parse_search_result(item: &Value, _username: &str, role: &str) -> Option<GitH
 // --- GitHub Authentication ---
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase"))]
 pub struct DeviceCodeResponse {
     pub device_code: String,
     pub user_code: String,
@@ -754,6 +745,7 @@ pub struct DeviceCodeResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubTokenResponse {
     pub access_token: String,
     pub token_type: String,
@@ -828,10 +820,10 @@ pub async fn start_device_code_flow(
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub device code: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("GitHub device code: {e}")))?;
 
     let body: DeviceCodeResponse = resp.json().await.map_err(|e| {
-        AppError::ExternalApi(format!("Failed to parse device code response: {}", e))
+        AppError::ExternalApi(format!("Failed to parse device code response: {e}"))
     })?;
 
     Ok(body)
@@ -872,8 +864,7 @@ pub async fn poll_device_code_token(
             }
             other => {
                 return Err(AppError::ExternalApi(format!(
-                    "GitHub OAuth error: {}",
-                    other
+                    "GitHub OAuth error: {other}"
                 )))
             }
         }
@@ -894,13 +885,13 @@ pub async fn poll_device_code_token(
 pub async fn fetch_authenticated_user(client: &Client, token: &str) -> AppResult<String> {
     let resp = client
         .get("https://api.github.com/user")
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("GitHub API: {e}")))?;
 
     let body: Value = resp.json().await?;
     let login = body["login"]

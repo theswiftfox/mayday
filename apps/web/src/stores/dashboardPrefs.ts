@@ -21,13 +21,17 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
   const loaded = ref(false)
   const saving = ref(false)
 
+  // Debounce helper for persist — avoids rapid-fire saves during drag-reorder, etc.
+  let persistTimer: ReturnType<typeof setTimeout> | null = null
+  const PERSIST_DELAY = 500
+
   // ---- Getters ----
 
-  const sectionOrder = computed(() => config.value.section_order)
-  const visibleSections = computed(() => config.value.visible_sections)
-  const calendarLayout = computed(() => config.value.calendar_layout)
-  const importantRules = computed(() => config.value.important_rules)
-  const pinnedItems = computed(() => config.value.pinned_items)
+  const sectionOrder = computed(() => config.value.sectionOrder)
+  const visibleSections = computed(() => config.value.visibleSections)
+  const calendarLayout = computed(() => config.value.calendarLayout)
+  const importantRules = computed(() => config.value.importantRules)
+  const pinnedItems = computed(() => config.value.pinnedItems)
   const filters = computed(() => config.value.filters)
 
   // ---- Persistence helpers ----
@@ -37,8 +41,21 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
     try {
       const dashboard = await api.getDashboardConfig()
       if (dashboard && Object.keys(dashboard).length > 0) {
-        // Merge with defaults so any missing fields get default values
-        config.value = { ...defaultDashboardConfig(), ...dashboard }
+        const defaults = defaultDashboardConfig()
+        // Deep merge: spread nested objects so missing keys get defaults
+        config.value = {
+          ...defaults,
+          ...dashboard,
+          importantRules: { ...defaults.importantRules, ...dashboard.importantRules },
+          filters: {
+            githubPr: { ...defaults.filters.githubPr, ...dashboard.filters?.githubPr },
+            gitlabMr: { ...defaults.filters.gitlabMr, ...dashboard.filters?.gitlabMr },
+            gitlabPipeline: { ...defaults.filters.gitlabPipeline, ...dashboard.filters?.gitlabPipeline },
+            jiraTicket: { ...defaults.filters.jiraTicket, ...dashboard.filters?.jiraTicket },
+            calendarEvent: { ...defaults.filters.calendarEvent, ...dashboard.filters?.calendarEvent },
+          },
+          pinnedItems: dashboard.pinnedItems ?? defaults.pinnedItems,
+        }
         // Migrate old gitlab_mr/gitlab_pipeline section entries to 'gitlab'
         migrateLegacyGitlabSections()
       }
@@ -52,7 +69,7 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
   /** Collapse old gitlab_mr / gitlab_pipeline entries into 'gitlab' */
   function migrateLegacyGitlabSections() {
     let dirty = false
-    for (const key of ['section_order', 'visible_sections'] as const) {
+    for (const key of ['sectionOrder', 'visibleSections'] as const) {
       const arr = config.value[key] as string[]
       const hasMr = arr.includes('gitlab_mr' as any)
       const hasPipeline = arr.includes('gitlab_pipeline' as any)
@@ -73,16 +90,32 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
         dirty = true
       }
     }
-    if (dirty) persist()
+    if (dirty) persistNow()
   }
 
-  /** Persist the current dashboard prefs to the server config */
-  async function persist() {
+  /** Persist the current dashboard prefs to the server config (debounced) */
+  function persist() {
+    if (persistTimer) clearTimeout(persistTimer)
+    persistTimer = setTimeout(async () => {
+      saving.value = true
+      try {
+        await api.updateDashboardConfig(config.value)
+      } catch {
+        // Silently fail — prefs are still in memory
+      } finally {
+        saving.value = false
+      }
+    }, PERSIST_DELAY)
+  }
+
+  /** Persist immediately without debounce (for use during migration) */
+  async function persistNow() {
+    if (persistTimer) clearTimeout(persistTimer)
     saving.value = true
     try {
       await api.updateDashboardConfig(config.value)
     } catch {
-      // Silently fail — prefs are still in memory
+      // Silently fail
     } finally {
       saving.value = false
     }
@@ -91,41 +124,41 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
   // ---- Actions ----
 
   function setSectionOrder(order: SectionType[]) {
-    config.value.section_order = order
+    config.value.sectionOrder = order
     persist()
   }
 
   function setCalendarLayout(layout: 'sidebar' | 'inline') {
-    config.value.calendar_layout = layout
+    config.value.calendarLayout = layout
     persist()
   }
 
   function setVisibleSections(sections: SectionType[]) {
-    config.value.visible_sections = sections
+    config.value.visibleSections = sections
     persist()
   }
 
   function toggleSectionVisibility(section: SectionType) {
-    const idx = config.value.visible_sections.indexOf(section)
+    const idx = config.value.visibleSections.indexOf(section)
     if (idx >= 0) {
-      config.value.visible_sections.splice(idx, 1)
+      config.value.visibleSections.splice(idx, 1)
     } else {
-      config.value.visible_sections.push(section)
+      config.value.visibleSections.push(section)
     }
     persist()
   }
 
   function isSectionVisible(section: SectionType): boolean {
-    return config.value.visible_sections.includes(section)
+    return config.value.visibleSections.includes(section)
   }
 
   function setImportantRules(rules: ImportantRules) {
-    config.value.important_rules = rules
+    config.value.importantRules = rules
     persist()
   }
 
   function updateImportantRule(key: keyof ImportantRules, value: boolean) {
-    config.value.important_rules[key] = value
+    config.value.importantRules[key] = value
     persist()
   }
 
@@ -135,47 +168,47 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
   }
 
   function updateGitHubPRFilter(filter: Partial<GitHubPRFilter>) {
-    config.value.filters.github_pr = { ...config.value.filters.github_pr, ...filter }
+    config.value.filters.githubPr = { ...config.value.filters.githubPr, ...filter }
     persist()
   }
 
   function updateGitLabMRFilter(filter: Partial<GitLabMRFilter>) {
-    config.value.filters.gitlab_mr = { ...config.value.filters.gitlab_mr, ...filter }
+    config.value.filters.gitlabMr = { ...config.value.filters.gitlabMr, ...filter }
     persist()
   }
 
   function updateGitLabPipelineFilter(filter: Partial<GitLabPipelineFilter>) {
-    config.value.filters.gitlab_pipeline = { ...config.value.filters.gitlab_pipeline, ...filter }
+    config.value.filters.gitlabPipeline = { ...config.value.filters.gitlabPipeline, ...filter }
     persist()
   }
 
   function updateJiraTicketFilter(filter: Partial<JiraTicketFilter>) {
-    config.value.filters.jira_ticket = { ...config.value.filters.jira_ticket, ...filter }
+    config.value.filters.jiraTicket = { ...config.value.filters.jiraTicket, ...filter }
     persist()
   }
 
   function updateCalendarEventFilter(filter: Partial<CalendarEventFilter>) {
-    config.value.filters.calendar_event = { ...config.value.filters.calendar_event, ...filter }
+    config.value.filters.calendarEvent = { ...config.value.filters.calendarEvent, ...filter }
     persist()
   }
 
   function togglePin(itemType: string, item: any) {
     const itemId = getItemId(itemType, item)
-    const idx = config.value.pinned_items.findIndex(
-      (p) => p.item_type === itemType && p.item_id === itemId
+    const idx = config.value.pinnedItems.findIndex(
+      (p) => p.itemType === itemType && p.itemId === itemId
     )
     if (idx >= 0) {
-      config.value.pinned_items.splice(idx, 1)
+      config.value.pinnedItems.splice(idx, 1)
     } else {
-      config.value.pinned_items.push({ item_type: itemType, item_id: itemId })
+      config.value.pinnedItems.push({ itemType: itemType, itemId: itemId })
     }
     persist()
   }
 
   function isPinned(itemType: string, item: any): boolean {
     const itemId = getItemId(itemType, item)
-    return config.value.pinned_items.some(
-      (p) => p.item_type === itemType && p.item_id === itemId
+    return config.value.pinnedItems.some(
+      (p) => p.itemType === itemType && p.itemId === itemId
     )
   }
 
@@ -187,11 +220,11 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
       if (id) validIds.add(`${item.type}:${id}`)
     }
 
-    const before = config.value.pinned_items.length
-    config.value.pinned_items = config.value.pinned_items.filter(
-      (p) => validIds.has(`${p.item_type}:${p.item_id}`)
+    const before = config.value.pinnedItems.length
+    config.value.pinnedItems = config.value.pinnedItems.filter(
+      (p) => validIds.has(`${p.itemType}:${p.itemId}`)
     )
-    if (config.value.pinned_items.length !== before) {
+    if (config.value.pinnedItems.length !== before) {
       persist()
     }
   }
@@ -208,6 +241,7 @@ export const useDashboardPrefsStore = defineStore('dashboardPrefs', () => {
     filters,
     load,
     persist,
+    persistNow,
     setSectionOrder,
     setCalendarLayout,
     setVisibleSections,

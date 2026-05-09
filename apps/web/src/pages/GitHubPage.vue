@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { useDashboardPrefsStore } from '@/stores/dashboardPrefs'
 import { useFilteredGitHubPRs } from '@/composables/useFilteredItems'
 import { useImportantItems } from '@/composables/useImportantItems'
+import { useNow } from '@/composables/useNow'
 import PRCard from '@/components/PRCard.vue'
 import GitHubPRFilterPopover from '@/components/GitHubPRFilterPopover.vue'
 
@@ -27,14 +28,16 @@ onMounted(async () => {
 })
 
 // Apply shared filters
-const filtered = useFilteredGitHubPRs(prs, computed(() => prefs.filters.github_pr))
+const filtered = useFilteredGitHubPRs(prs, computed(() => prefs.filters.githubPr))
 
 // Split into important + rest
+const now = useNow()
 const split = useImportantItems(
   filtered,
   'github_pr',
   computed(() => prefs.importantRules),
-  computed(() => prefs.pinnedItems)
+  computed(() => prefs.pinnedItems),
+  now
 )
 
 const importantPRs = computed(() => split.value.important)
