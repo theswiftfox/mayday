@@ -7,7 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag (e.g. v0.1.0). Leave empty to use package.json version."
+        description: "Version tag (e.g. v0.1.0). Leave empty to use
+          apps/desktop/package.json version."
         required: false
         type: string
 
@@ -96,7 +97,7 @@ jobs:
             echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
             echo "version=$(echo '${{ inputs.version }}' | sed 's/^v//')" >> $GITHUB_OUTPUT
           else
-            VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+            VERSION=$(jq -r .version apps/desktop/package.json)
             echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
           fi
