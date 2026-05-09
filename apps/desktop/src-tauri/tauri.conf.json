@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
-  "productName": "M(a)y Day",
+  "productName": "MayDay",
   "version": "../package.json",
   "identifier": "com.mayday.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "M(a)y Day",
+        "title": "MayDay",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

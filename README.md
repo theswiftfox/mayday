@@ -1,8 +1,8 @@
-# m(a)yday
+# MayDay
 
 A developer dashboard that brings your daily work into one view -- pull requests, merge requests, tickets, pipelines, and calendar events, all in a single Tauri desktop app.
 
-![M(a)y Day dashboard preview](preview.png)
+![MayDay dashboard preview](preview.png)
 
 ### Features
 
