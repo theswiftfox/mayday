@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Elena Gantner
-//! Tauri IPC commands — thin wrappers around the myday-server service layer.
+//! Tauri IPC commands — thin wrappers around the myday-core service layer.
 //! These replace the HTTP route handlers when running as a Tauri desktop app.
 
 use serde::Deserialize;
 use serde_json::Value;
 use tauri::State;
 
-use myday_server::config::{
+use myday_core::config::{
     CalendarConfig, DashboardConfig, GeneralConfig, GitHubConfig, GitLabConfig, GitLabProject,
     JiraConfig,
 };
-use myday_server::responses::{
+use myday_core::responses::{
     AuthResult, CalendarAuthStartResponse, CalendarAuthStatusResponse,
     CalendarDeviceCodeStartResponse, DataResponse, DeviceCodePollResponse,
     GhDeviceCodeStartResponse, MaskedCalendarConfig, MaskedConfig, MaskedGitHubConfig,
     MaskedGitLabConfig, MaskedJiraConfig, ResolvedGitLabProject, StatusResponse,
 };
-use myday_server::services;
-use myday_server::state::AppState;
+use myday_core::services;
+use myday_core::state::AppState;
 
 use crate::error::CommandError;
 
