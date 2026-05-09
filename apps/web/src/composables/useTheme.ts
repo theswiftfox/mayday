@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Elena Gantner
 import { ref, watch } from 'vue'
 
 const STORAGE_KEY = 'myday-theme'

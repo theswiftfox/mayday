@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Elena Gantner
 const isTauri = !!(window as any).__TAURI_INTERNALS__
 
 // Lazy-load invoke only in Tauri mode

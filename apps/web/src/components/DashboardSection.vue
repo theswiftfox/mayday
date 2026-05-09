@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 Elena Gantner -->
 <script setup lang="ts">
 import { ref } from 'vue'
 import { RouterLink } from 'vue-router'
