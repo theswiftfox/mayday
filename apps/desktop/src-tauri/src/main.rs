@@ -17,7 +17,7 @@ mod auth_session;
 #[tauri::command]
 async fn open_auth_window(
     app: tauri::AppHandle,
-    state: tauri::State<'_, myday_server::state::AppState>,
+    state: tauri::State<'_, myday_core::state::AppState>,
     url: String,
 ) -> Result<(), error::CommandError> {
     eprintln!(
@@ -83,10 +83,10 @@ async fn open_auth_window(
 
 /// Exchange an auth code directly via the service layer (no HTTP round-trip)
 async fn exchange_code_internal(
-    state: &myday_server::state::AppState,
+    state: &myday_core::state::AppState,
     code: &str,
 ) -> Result<(), error::CommandError> {
-    use myday_server::services;
+    use myday_core::services;
 
     let config = state.config.read().await;
     let calendar_config = config
@@ -148,7 +148,7 @@ fn main() {
     // Initialize application state (same AppState used by the service layer)
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     let state = rt
-        .block_on(myday_server::state::AppState::new())
+        .block_on(myday_core::state::AppState::new())
         .expect("failed to initialize app state");
 
     tauri::Builder::default()

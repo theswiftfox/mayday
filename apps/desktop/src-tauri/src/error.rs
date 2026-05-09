@@ -5,7 +5,7 @@
 //! Serialized as `{ "code": "...", "message": "..." }` so the frontend can
 //! programmatically distinguish error categories.
 
-use myday_server::error::AppError;
+use myday_core::error::AppError;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

@@ -2,17 +2,17 @@
 # SPDX-FileCopyrightText: 2026 Elena Gantner
 
 [package]
-name = "myday-server"
+name = "myday-core"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "myday-server"
+name = "myday-service"
 path = "src/main.rs"
 required-features = ["http-server"]
 
 [features]
-default = ["http-server"]
+default = []
 http-server = ["dep:axum", "dep:tower", "dep:tower-http"]
 
 [dependencies]

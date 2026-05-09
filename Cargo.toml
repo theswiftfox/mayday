@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Elena Gantner
 
 [workspace]
-members = ["crates/server"]
-exclude = ["apps/desktop/src-tauri"]
+members = ["crates/service", "apps/desktop/src-tauri"]
+default-members = ["apps/desktop/src-tauri"]
 resolver = "2"
 
 [workspace.package]
