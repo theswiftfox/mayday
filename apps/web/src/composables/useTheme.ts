@@ -13,12 +13,20 @@ const currentTheme = ref<Theme>(
 function applyTheme(theme: Theme) {
   document.documentElement.setAttribute('data-theme', theme)
 
-  // Sync native title bar appearance with the selected theme in Tauri
+  // Sync native title bar and window background with the selected theme in Tauri
   if ((window as any).__TAURI_INTERNALS__) {
     import('@tauri-apps/api/webviewWindow').then(({ getCurrentWebviewWindow }) => {
       const tauriTheme = theme === 'system' ? null : theme === 'dark' ? 'dark' : 'light'
       getCurrentWebviewWindow().setTheme(tauriTheme)
-    }).catch(() => {})
+    }).catch((e) => console.warn('Failed to set window theme:', e))
+
+    // Read the background color from the CSS variable so it stays in sync with main.css
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--color-background').trim()
+    if (bg) {
+      import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+        getCurrentWindow().setBackgroundColor(bg)
+      }).catch((e) => console.warn('Failed to set window background color:', e))
+    }
   }
 }
 
