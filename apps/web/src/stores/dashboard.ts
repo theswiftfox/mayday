@@ -3,6 +3,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/lib/api'
+import { checkDemoMode } from '@/composables/useDemo'
 import type {
   DashboardItem,
   IntegrationError,
@@ -84,11 +85,18 @@ export const useDashboardStore = defineStore('dashboard', () => {
       refreshing.value = true
     }
     try {
-      const response = await api.getDashboard()
-      items.value = response.items as DashboardItem[]
-      errors.value = response.errors
-      lastUpdated.value = response.lastUpdated
-      saveToCache(items.value, lastUpdated.value)
+      if (checkDemoMode()) {
+        const { demoDashboardItems, demoLastUpdated } = await import('@/lib/demo-data')
+        items.value = demoDashboardItems
+        errors.value = []
+        lastUpdated.value = demoLastUpdated
+      } else {
+        const response = await api.getDashboard()
+        items.value = response.items as DashboardItem[]
+        errors.value = response.errors
+        lastUpdated.value = response.lastUpdated
+        saveToCache(items.value, lastUpdated.value)
+      }
     } catch (e: any) {
       errors.value = [{ source: 'app', message: e.message }]
     } finally {

@@ -1,5 +1,18 @@
 # m(a)yday
 
+A developer dashboard that brings your daily work into one view -- pull requests, merge requests, tickets, pipelines, and calendar events, all in a single Tauri desktop app.
+
+![M(a)y Day dashboard preview](preview.png)
+
+### Features
+
+- **GitHub** -- open PRs across your repos, with review status, CI checks, and action-required indicators
+- **GitLab** -- merge requests and pipeline status at a glance
+- **Jira** -- tickets assigned to you, grouped by status and sprint
+- **Calendar** -- today's meetings from Microsoft 365 (Graph API / EWS) or any ICS feed
+- **Dashboard** -- a unified view with drag-and-drop section ordering, filters, and pinned items
+- **Auto-updates** -- checks for new versions on launch, with manual check in Settings
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/)
@@ -51,6 +64,7 @@ The `.dmg` will be in `apps/desktop/src-tauri/target/release/bundle/dmg/`.
 | `APPLE_API_KEY` | App Store Connect API key ID |
 | `APPLE_API_ISSUER` | App Store Connect issuer ID |
 | `APPLE_API_KEY_CONTENT` | Contents of the `.p8` API key file |
+| `TAURI_SIGNING_PRIVATE_KEY` | Private key for signing updater artifacts (see `~/.tauri/myday.key`) |
 
 ## License
 
