@@ -4,7 +4,7 @@ import { ref, watch } from 'vue'
 
 const STORAGE_KEY = 'myday-theme'
 
-type Theme = 'light' | 'dark' | 'system'
+type Theme = 'light' | 'dark' | 'system' | 'win98'
 
 const currentTheme = ref<Theme>(
   (localStorage.getItem(STORAGE_KEY) as Theme) || 'system'
@@ -12,6 +12,14 @@ const currentTheme = ref<Theme>(
 
 function applyTheme(theme: Theme) {
   document.documentElement.setAttribute('data-theme', theme)
+
+  // Sync native title bar appearance with the selected theme in Tauri
+  if ((window as any).__TAURI_INTERNALS__) {
+    import('@tauri-apps/api/webviewWindow').then(({ getCurrentWebviewWindow }) => {
+      const tauriTheme = theme === 'system' ? null : theme === 'dark' ? 'dark' : 'light'
+      getCurrentWebviewWindow().setTheme(tauriTheme)
+    }).catch(() => {})
+  }
 }
 
 // Apply immediately on module load

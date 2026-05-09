@@ -169,7 +169,7 @@ function onAuthSuccess(msg: string) {
 
 // Apply theme immediately when changed in the select
 watch(() => config.value.general.theme, (newTheme) => {
-  setTheme(newTheme as 'light' | 'dark' | 'system')
+  setTheme(newTheme as 'light' | 'dark' | 'system' | 'win98')
 })
 </script>
 
@@ -195,6 +195,7 @@ watch(() => config.value.general.theme, (newTheme) => {
               <option value="light">Light</option>
               <option value="dark">Dark</option>
               <option value="system">System</option>
+              <option value="win98">Windows 98</option>
             </select>
           </label>
           <label class="flex items-center gap-2 text-sm text-[var(--color-text)]">

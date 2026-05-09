@@ -23,7 +23,7 @@ function isActive(path: string): boolean {
 <template>
   <div class="flex h-screen">
     <!-- Sidebar -->
-    <aside class="w-56 border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col">
+    <aside class="w-56 border-r border-[var(--color-sidebar-border)] bg-[var(--color-surface)] flex flex-col">
       <div class="p-4 border-b border-[var(--color-border)]">
         <h1 class="text-lg font-semibold">My Day</h1>
         <p class="text-xs text-[var(--color-text-muted)]">{{ new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) }}</p>
@@ -34,7 +34,7 @@ function isActive(path: string): boolean {
           :key="item.path"
           :to="item.path"
           class="flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors"
-          :class="isActive(item.path) ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]'"
+          :class="isActive(item.path) ? 'nav-active bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-medium' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]'"
         >
           <span class="text-base">{{ item.icon }}</span>
           <span>{{ item.label }}</span>
