@@ -153,6 +153,12 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
+        .setup(|app| {
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            Ok(())
+        })
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             open_auth_window,
