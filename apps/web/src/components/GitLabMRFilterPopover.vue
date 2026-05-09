@@ -7,7 +7,7 @@ import FilterPopover from './FilterPopover.vue'
 import { hasActiveFilter } from '@/composables/useFilteredItems'
 
 const prefs = useDashboardPrefsStore()
-const filter = computed(() => prefs.filters.gitlab_mr)
+const filter = computed(() => prefs.filters.gitlabMr)
 const active = computed(() => hasActiveFilter('gitlab_mr', prefs.filters))
 
 function toggleRole(role: string) {
@@ -19,11 +19,11 @@ function toggleRole(role: string) {
 }
 
 function toggleHideDrafts() {
-  prefs.updateGitLabMRFilter({ hide_drafts: !filter.value.hide_drafts })
+  prefs.updateGitLabMRFilter({ hideDrafts: !filter.value.hideDrafts })
 }
 
 function clearAll() {
-  prefs.updateGitLabMRFilter({ roles: [], hide_drafts: false })
+  prefs.updateGitLabMRFilter({ roles: [], hideDrafts: false })
 }
 </script>
 
@@ -47,7 +47,7 @@ function clearAll() {
       <!-- Toggles -->
       <div>
         <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" :checked="filter.hide_drafts" @change="toggleHideDrafts" class="rounded" />
+          <input type="checkbox" :checked="filter.hideDrafts" @change="toggleHideDrafts" class="rounded" />
           <span class="text-sm" style="color: var(--color-text)">Hide drafts</span>
         </label>
       </div>

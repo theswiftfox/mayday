@@ -15,8 +15,8 @@ export function useFilteredGitHubPRs(prs: Ref<any[]>, filter: Ref<GitHubPRFilter
     return prs.value.filter((pr) => {
       const f = filter.value
       if (f.roles.length && !f.roles.includes(pr.role)) return false
-      if (f.hide_drafts && pr.is_draft) return false
-      if (f.action_required_only && !pr.action_required) return false
+      if (f.hideDrafts && pr.isDraft) return false
+      if (f.actionRequiredOnly && !pr.actionRequired) return false
       return true
     })
   })
@@ -28,7 +28,7 @@ export function useFilteredGitLabMRs(mrs: Ref<any[]>, filter: Ref<GitLabMRFilter
     return mrs.value.filter((mr) => {
       const f = filter.value
       if (f.roles.length && !f.roles.includes(mr.role)) return false
-      if (f.hide_drafts && mr.is_draft) return false
+      if (f.hideDrafts && mr.isDraft) return false
       return true
     })
   })
@@ -53,9 +53,9 @@ export function useFilteredJiraTickets(tickets: Ref<any[]>, filter: Ref<JiraTick
   return computed(() => {
     return tickets.value.filter((t) => {
       const f = filter.value
-      if (f.status_categories.length && !f.status_categories.includes(t.status_category)) return false
+      if (f.statusCategories.length && !f.statusCategories.includes(t.statusCategory)) return false
       if (f.priorities.length && !f.priorities.includes(t.priority?.toLowerCase())) return false
-      if (f.issue_types.length && !f.issue_types.includes(t.issue_type?.toLowerCase())) return false
+      if (f.issueTypes.length && !f.issueTypes.includes(t.issueType?.toLowerCase())) return false
       return true
     })
   })
@@ -66,8 +66,8 @@ export function useFilteredCalendarEvents(events: Ref<any[]>, filter: Ref<Calend
   return computed(() => {
     return events.value.filter((e) => {
       const f = filter.value
-      if (f.hide_all_day && e.is_all_day) return false
-      if (f.online_only && !e.is_online) return false
+      if (f.hideAllDay && e.isAllDay) return false
+      if (f.onlineOnly && !e.isOnline) return false
       return true
     })
   })
@@ -77,24 +77,24 @@ export function useFilteredCalendarEvents(events: Ref<any[]>, filter: Ref<Calend
 export function hasActiveFilter(sectionType: string, filters: any): boolean {
   switch (sectionType) {
     case 'github_pr': {
-      const f = filters.github_pr as GitHubPRFilter
-      return f.roles.length > 0 || f.hide_drafts || f.action_required_only
+      const f = filters.githubPr as GitHubPRFilter
+      return f.roles.length > 0 || f.hideDrafts || f.actionRequiredOnly
     }
     case 'gitlab_mr': {
-      const f = filters.gitlab_mr as GitLabMRFilter
-      return f.roles.length > 0 || f.hide_drafts
+      const f = filters.gitlabMr as GitLabMRFilter
+      return f.roles.length > 0 || f.hideDrafts
     }
     case 'gitlab_pipeline': {
-      const f = filters.gitlab_pipeline as GitLabPipelineFilter
+      const f = filters.gitlabPipeline as GitLabPipelineFilter
       return f.statuses.length > 0
     }
     case 'jira_ticket': {
-      const f = filters.jira_ticket as JiraTicketFilter
-      return f.status_categories.length > 0 || f.priorities.length > 0 || f.issue_types.length > 0
+      const f = filters.jiraTicket as JiraTicketFilter
+      return f.statusCategories.length > 0 || f.priorities.length > 0 || f.issueTypes.length > 0
     }
     case 'calendar_event': {
-      const f = filters.calendar_event as CalendarEventFilter
-      return f.hide_all_day || f.online_only
+      const f = filters.calendarEvent as CalendarEventFilter
+      return f.hideAllDay || f.onlineOnly
     }
     default:
       return false

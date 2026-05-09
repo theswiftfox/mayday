@@ -14,6 +14,7 @@ import {
   useFilteredCalendarEvents,
 } from '@/composables/useFilteredItems'
 import { useImportantItemsAll } from '@/composables/useImportantItems'
+import { useNow } from '@/composables/useNow'
 import type { SectionType } from '@/types/dashboard'
 import DashboardSection from '@/components/DashboardSection.vue'
 import MeetingCard from '@/components/MeetingCard.vue'
@@ -47,31 +48,39 @@ watch(() => store.items, (items) => {
 
 const filteredGitHubPRs = useFilteredGitHubPRs(
   computed(() => store.githubPRs),
-  computed(() => prefs.filters.github_pr)
+  computed(() => prefs.filters.githubPr)
 )
 const filteredGitLabMRs = useFilteredGitLabMRs(
   computed(() => store.gitlabMRs),
-  computed(() => prefs.filters.gitlab_mr)
+  computed(() => prefs.filters.gitlabMr)
 )
 const filteredPipelines = useFilteredGitLabPipelines(
   computed(() => store.gitlabPipelines),
-  computed(() => prefs.filters.gitlab_pipeline)
+  computed(() => prefs.filters.gitlabPipeline)
 )
 const filteredJiraTickets = useFilteredJiraTickets(
   computed(() => store.jiraTickets),
-  computed(() => prefs.filters.jira_ticket)
+  computed(() => prefs.filters.jiraTicket)
 )
 const filteredCalendarEvents = useFilteredCalendarEvents(
   computed(() => store.calendarEvents),
-  computed(() => prefs.filters.calendar_event)
+  computed(() => prefs.filters.calendarEvent)
 )
 
 // ---- Important items (across all types) ----
 
+const now = useNow()
+const greeting = computed(() => {
+  const hour = new Date(now.value).getHours()
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
+})
 const importantSplit = useImportantItemsAll(
   computed(() => store.items),
   computed(() => prefs.importantRules),
-  computed(() => prefs.pinnedItems)
+  computed(() => prefs.pinnedItems),
+  now
 )
 
 const importantItems = computed(() => importantSplit.value.important)
@@ -124,7 +133,7 @@ function isFilteredEmpty(section: SectionType): boolean {
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h1 class="text-2xl font-bold">Good morning</h1>
+        <h1 class="text-2xl font-bold">{{ greeting }}</h1>
         <p class="text-sm text-[var(--color-text-muted)]">
           Here's your day at a glance
         </p>

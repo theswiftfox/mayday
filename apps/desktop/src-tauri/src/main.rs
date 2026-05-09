@@ -6,6 +6,7 @@
 use tauri::Emitter;
 
 mod commands;
+mod error;
 
 #[cfg(target_os = "macos")]
 mod auth_session;
@@ -18,7 +19,7 @@ async fn open_auth_window(
     app: tauri::AppHandle,
     state: tauri::State<'_, myday_server::state::AppState>,
     url: String,
-) -> Result<(), String> {
+) -> Result<(), error::CommandError> {
     eprintln!(
         "[myday] open_auth_window called with url: {}...",
         &url[..url.len().min(80)]
@@ -39,27 +40,32 @@ async fn open_auth_window(
             Ok(Ok(callback_url)) => {
                 let code = extract_code_from_url(&callback_url);
                 if let Some(code) = code {
-                    // Exchange the code directly via the service layer (no HTTP)
                     let exchange_result = exchange_code_internal(&state_inner, &code).await;
                     match exchange_result {
                         Ok(_) => {
                             let _ = app_handle.emit("calendar-auth-complete", "connected");
                         }
                         Err(e) => {
-                            eprintln!("Auth code exchange failed: {}", e);
-                            let _ = app_handle.emit("calendar-auth-error", e);
+                            let msg = e.message.clone();
+                            let _ = app_handle.emit("calendar-auth-error", &msg);
+                            return Err(e);
                         }
                     }
                 } else {
-                    let _ = app_handle.emit("calendar-auth-error", "No code in callback URL");
+                    let msg = "No authorization code found in callback URL";
+                    let _ = app_handle.emit("calendar-auth-error", msg);
+                    return Err(error::CommandError::external_api(msg));
                 }
             }
             Ok(Err(e)) => {
-                eprintln!("Auth session error: {}", e);
-                let _ = app_handle.emit("calendar-auth-error", e);
+                eprintln!("Auth session error: {e}");
+                let _ = app_handle.emit("calendar-auth-error", &e);
+                return Err(error::CommandError::auth_failed(e));
             }
             Err(_) => {
-                let _ = app_handle.emit("calendar-auth-error", "Auth session cancelled");
+                let msg = "Auth session channel closed unexpectedly";
+                let _ = app_handle.emit("calendar-auth-error", msg);
+                return Err(error::CommandError::internal(msg));
             }
         }
     }
@@ -69,6 +75,7 @@ async fn open_auth_window(
         let _ = app;
         let _ = state;
         let _ = url;
+        return Err(error::CommandError::internal("OAuth auth sessions are only supported on macOS"));
     }
 
     Ok(())
@@ -78,14 +85,14 @@ async fn open_auth_window(
 async fn exchange_code_internal(
     state: &myday_server::state::AppState,
     code: &str,
-) -> Result<(), String> {
+) -> Result<(), error::CommandError> {
     use myday_server::services;
 
     let config = state.config.read().await;
     let calendar_config = config
         .calendar
         .as_ref()
-        .ok_or_else(|| "calendar not configured".to_string())?;
+        .ok_or_else(|| error::CommandError::not_configured("calendar not configured"))?;
 
     let redirect_uri = calendar_config
         .ms_redirect_uri
@@ -95,8 +102,14 @@ async fn exchange_code_internal(
         .to_string();
 
     let use_v1 = services::calendar::is_v1_flow(&redirect_uri);
+    drop(config);
 
     let token_resp = if use_v1 {
+        let config = state.config.read().await;
+        let calendar_config = config
+            .calendar
+            .as_ref()
+            .ok_or_else(|| error::CommandError::not_configured("calendar not configured"))?;
         services::calendar::exchange_auth_code_v1(
             &state.http_client,
             calendar_config,
@@ -104,97 +117,20 @@ async fn exchange_code_internal(
             &redirect_uri,
         )
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(error::CommandError::from)?
     } else {
-        let code_verifier = {
-            let verifier = state.pkce_verifier.read().await;
-            verifier.clone()
-        };
-
-        let client_id = calendar_config
-            .ms_client_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(myday_server::config::DEFAULT_MS_CLIENT_ID);
-
-        let tenant = calendar_config.ms_tenant_id.as_deref().unwrap_or("common");
-        let scope = services::calendar::scopes_for_source(&calendar_config.source);
-
-        let url = format!(
-            "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-            tenant
-        );
-
-        let mut params: Vec<(&str, &str)> = vec![
-            ("grant_type", "authorization_code"),
-            ("client_id", client_id),
-            ("code", code),
-            ("redirect_uri", &redirect_uri),
-            ("scope", scope),
-        ];
-
-        let verifier_str;
-        if let Some(ref v) = code_verifier {
-            verifier_str = v.clone();
-            params.push(("code_verifier", &verifier_str));
-        }
-
-        let resp = state
-            .http_client
-            .post(&url)
-            .form(&params)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let resp_body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-
-        if let Some(error) = resp_body["error"].as_str() {
-            let desc = resp_body["error_description"]
-                .as_str()
-                .unwrap_or("Unknown error");
-            return Err(format!("Token exchange failed: {} - {}", error, desc));
-        }
-
-        services::calendar::TokenResponse {
-            access_token: resp_body["access_token"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-            refresh_token: resp_body["refresh_token"].as_str().map(String::from),
-            expires_in: resp_body["expires_in"].as_u64().unwrap_or(3600),
-        }
+        commands::exchange_code_v2(state, code, &redirect_uri).await?
     };
 
-    let refresh_token = token_resp.refresh_token;
-    drop(config);
-
-    {
-        let mut verifier = state.pkce_verifier.write().await;
-        *verifier = None;
-    }
-
-    {
-        let mut config = state.config.write().await;
-        if let Some(cal) = config.calendar.as_mut() {
-            cal.ms_refresh_token = refresh_token;
-        }
-    }
-
-    state.save_config().await.map_err(|e| e.to_string())?;
+    commands::save_calendar_token(state, token_resp, None).await?;
     Ok(())
 }
 
 fn extract_code_from_url(url_str: &str) -> Option<String> {
-    if let Some(query_start) = url_str.find('?') {
-        let query = &url_str[query_start + 1..];
-        for pair in query.split('&') {
-            if let Some(value) = pair.strip_prefix("code=") {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
+    let url = url::Url::parse(url_str).ok()?;
+    url.query_pairs()
+        .find(|(key, _)| key == "code")
+        .map(|(_, value)| value.into_owned())
 }
 
 fn main() {

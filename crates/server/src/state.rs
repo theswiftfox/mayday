@@ -14,10 +14,12 @@ use crate::config::AppConfig;
 pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub http_client: reqwest::Client,
-    /// PKCE code_verifier stored between auth start and callback
-    pub pkce_verifier: Arc<RwLock<Option<String>>>,
-    /// Device code stored between device-code/start and device-code/poll
-    pub device_code: Arc<RwLock<Option<String>>>,
+    /// PKCE code_verifiers keyed by a random session ID.
+    /// Each entry expires after 10 minutes (max OAuth flow lifetime).
+    pub pkce_verifiers: Cache<String, String>,
+    /// Device codes keyed by source name (e.g. "calendar").
+    /// Each entry expires after 15 minutes.
+    pub device_codes: Cache<String, String>,
     /// TTL cache for API responses (avoids repeated external API calls)
     pub api_cache: Cache<String, Value>,
 }
@@ -28,6 +30,8 @@ impl AppState {
 
         let http_client = reqwest::Client::builder()
             .user_agent("myday/0.1.0")
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
             .build()?;
 
         let api_cache = Cache::builder()
@@ -35,13 +39,37 @@ impl AppState {
             .max_capacity(10)
             .build();
 
-        Ok(Self {
+        let pkce_verifiers = Cache::builder()
+            .time_to_live(Duration::from_secs(600)) // 10 minute expiry
+            .max_capacity(16)
+            .build();
+
+        let device_codes = Cache::builder()
+            .time_to_live(Duration::from_secs(900)) // 15 minute expiry
+            .max_capacity(8)
+            .build();
+
+        let config_path = Self::config_path();
+        let config_existed = config_path.exists();
+
+        let state = Self {
             config: Arc::new(RwLock::new(config)),
             http_client,
-            pkce_verifier: Arc::new(RwLock::new(None)),
-            device_code: Arc::new(RwLock::new(None)),
+            pkce_verifiers,
+            device_codes,
             api_cache,
-        })
+        };
+
+        // Re-save to migrate any legacy snake_case keys to camelCase.
+        // The `alias` attributes on config structs accept old names on read,
+        // and `rename_all = "camelCase"` writes the canonical names back.
+        if config_existed {
+            if let Err(e) = state.save_config().await {
+                tracing::warn!("Config migration re-save failed: {e}");
+            }
+        }
+
+        Ok(state)
     }
 
     async fn load_config() -> Result<AppConfig> {
@@ -66,7 +94,20 @@ impl AppState {
         }
 
         let content = serde_json::to_string_pretty(&*config)?;
-        tokio::fs::write(&config_path, content).await?;
+
+        // Write to temp file first, then atomic rename
+        let tmp_path = config_path.with_extension("json.tmp");
+        tokio::fs::write(&tmp_path, &content).await?;
+        tokio::fs::rename(&tmp_path, &config_path).await?;
+
+        // Restrict file permissions to owner-only (0600)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            tokio::fs::set_permissions(&config_path, perms).await?;
+        }
+
         Ok(())
     }
 

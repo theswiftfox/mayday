@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { useDashboardPrefsStore } from '@/stores/dashboardPrefs'
 import { useFilteredGitLabMRs, useFilteredGitLabPipelines } from '@/composables/useFilteredItems'
 import { useImportantItems } from '@/composables/useImportantItems'
+import { useNow } from '@/composables/useNow'
 import MRCard from '@/components/MRCard.vue'
 import PipelineCard from '@/components/PipelineCard.vue'
 import GitLabMRFilterPopover from '@/components/GitLabMRFilterPopover.vue'
@@ -34,15 +35,17 @@ onMounted(async () => {
 })
 
 // Apply shared filters
-const filteredMRs = useFilteredGitLabMRs(mrs, computed(() => prefs.filters.gitlab_mr))
-const filteredPipelines = useFilteredGitLabPipelines(pipelines, computed(() => prefs.filters.gitlab_pipeline))
+const filteredMRs = useFilteredGitLabMRs(mrs, computed(() => prefs.filters.gitlabMr))
+const filteredPipelines = useFilteredGitLabPipelines(pipelines, computed(() => prefs.filters.gitlabPipeline))
 
 // Split MRs into important + rest
+const now = useNow()
 const mrSplit = useImportantItems(
   filteredMRs,
   'gitlab_mr',
   computed(() => prefs.importantRules),
-  computed(() => prefs.pinnedItems)
+  computed(() => prefs.pinnedItems),
+  now
 )
 
 // Split Pipelines into important + rest
@@ -50,7 +53,8 @@ const pipelineSplit = useImportantItems(
   filteredPipelines,
   'gitlab_pipeline',
   computed(() => prefs.importantRules),
-  computed(() => prefs.pinnedItems)
+  computed(() => prefs.pinnedItems),
+  now
 )
 
 const importantMRs = computed(() => mrSplit.value.important)

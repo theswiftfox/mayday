@@ -17,17 +17,16 @@ function applyTheme(theme: Theme) {
 // Apply immediately on module load
 applyTheme(currentTheme.value)
 
+// Single module-level watcher — no leak regardless of how many times useTheme() is called
+watch(currentTheme, (newTheme) => {
+  applyTheme(newTheme)
+})
+
 export function useTheme() {
   function setTheme(theme: Theme) {
     currentTheme.value = theme
     localStorage.setItem(STORAGE_KEY, theme)
-    applyTheme(theme)
   }
-
-  // Watch for changes (e.g., from settings page)
-  watch(currentTheme, (newTheme) => {
-    applyTheme(newTheme)
-  })
 
   return {
     theme: currentTheme,

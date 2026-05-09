@@ -7,7 +7,10 @@ use serde_json::Value;
 use crate::config::JiraConfig;
 use crate::error::{AppError, AppResult};
 
+use super::sanitize_host;
+
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JiraTicket {
     pub id: String,
     pub key: String,
@@ -25,6 +28,7 @@ pub struct JiraTicket {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JiraTicketDetail {
     #[serde(flatten)]
     pub ticket: JiraTicket,
@@ -34,6 +38,7 @@ pub struct JiraTicketDetail {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JiraComment {
     pub id: String,
     pub author: String,
@@ -42,6 +47,7 @@ pub struct JiraComment {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JiraSubtask {
     pub key: String,
     pub title: String,
@@ -51,16 +57,24 @@ pub struct JiraSubtask {
 /// Fetch tickets assigned to the current user
 pub async fn fetch_tickets(client: &Client, config: &JiraConfig) -> AppResult<Vec<JiraTicket>> {
     let host = sanitize_host(&config.host);
-    let base_url = format!("https://{}/rest/api/3", host);
+    let base_url = format!("https://{host}/rest/api/3");
 
     // JQL: assigned to current user, not done
     let mut jql = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC".to_string();
 
     if !config.project_keys.is_empty() {
-        let projects = config.project_keys.join(", ");
+        let projects = config
+            .project_keys
+            .iter()
+            .map(|k| {
+                // Only allow alphanumeric and underscore characters in project keys
+                let sanitized: String = k.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
+                format!("\"{sanitized}\"")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         jql = format!(
-            "assignee = currentUser() AND project IN ({}) AND statusCategory != Done ORDER BY updated DESC",
-            projects
+            "assignee = currentUser() AND project IN ({projects}) AND statusCategory != Done ORDER BY updated DESC"
         );
     }
 
@@ -71,7 +85,7 @@ pub async fn fetch_tickets(client: &Client, config: &JiraConfig) -> AppResult<Ve
 
     // Use the newer POST-based search endpoint (GET /search is deprecated / 410 Gone)
     let resp = client
-        .post(format!("{}/search/jql", base_url))
+        .post(format!("{base_url}/search/jql"))
         .basic_auth(&config.email, Some(&config.api_token))
         .header("Accept", "application/json")
         .json(&serde_json::json!({
@@ -82,7 +96,7 @@ pub async fn fetch_tickets(client: &Client, config: &JiraConfig) -> AppResult<Ve
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("JIRA API: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("JIRA API: {e}")))?;
 
     let body: Value = resp.json().await?;
     let empty = vec![];
@@ -103,18 +117,18 @@ pub async fn fetch_ticket_detail(
     key: &str,
 ) -> AppResult<JiraTicketDetail> {
     let host = sanitize_host(&config.host);
-    let base_url = format!("https://{}/rest/api/3", host);
+    let base_url = format!("https://{host}/rest/api/3");
 
     // Fetch issue with all fields
     let resp = client
-        .get(format!("{}/issue/{}", base_url, key))
+        .get(format!("{base_url}/issue/{key}"))
         .query(&[("expand", "renderedFields")])
         .basic_auth(&config.email, Some(&config.api_token))
         .header("Accept", "application/json")
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("JIRA API: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("JIRA API: {e}")))?;
 
     let issue: Value = resp.json().await?;
 
@@ -196,7 +210,7 @@ fn parse_jira_issue(issue: &Value, host: &str) -> Option<JiraTicket> {
         id: issue["id"].as_str().unwrap_or("").to_string(),
         key: key.to_string(),
         title: fields["summary"].as_str().unwrap_or("").to_string(),
-        url: format!("https://{}/browse/{}", clean_host, key),
+        url: format!("https://{clean_host}/browse/{key}"),
         status: fields["status"]["name"].as_str().unwrap_or("").to_string(),
         status_category: status_category.to_string(),
         priority: fields["priority"]["name"]
@@ -222,13 +236,4 @@ fn parse_jira_issue(issue: &Value, host: &str) -> Option<JiraTicket> {
             .unwrap_or_default(),
         sprint_name,
     })
-}
-
-/// Strip protocol prefix and trailing slashes from a host string
-fn sanitize_host(host: &str) -> String {
-    host.trim()
-        .trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .trim_end_matches('/')
-        .to_string()
 }

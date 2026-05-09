@@ -2027,6 +2027,7 @@ dependencies = [
 name = "myday-desktop"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "block2",
  "chrono",
  "dispatch",
@@ -2045,6 +2046,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -2070,6 +2072,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]

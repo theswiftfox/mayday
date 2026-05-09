@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Elena Gantner -->
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import DOMPurify from 'dompurify'
 import { api } from '@/lib/api'
 import MarkdownContent from '@/components/MarkdownContent.vue'
 
@@ -11,17 +12,23 @@ const ticket = ref<any>(null)
 const loading = ref(true)
 const error = ref('')
 
-onMounted(async () => {
-  try {
-    const { key } = route.params as { key: string }
-    const { data } = await api.getJiraTicketDetail(key)
-    ticket.value = data
-  } catch (e: any) {
-    error.value = e.message || 'Failed to load ticket details'
-  } finally {
-    loading.value = false
-  }
-})
+watch(
+  () => route.params,
+  async (params) => {
+    loading.value = true
+    error.value = ''
+    try {
+      const { key } = params as { key: string }
+      const { data } = await api.getJiraTicketDetail(key)
+      ticket.value = data
+    } catch (e: any) {
+      error.value = e.message || 'Failed to load ticket details'
+    } finally {
+      loading.value = false
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -36,12 +43,12 @@ onMounted(async () => {
           <span class="text-sm text-[var(--color-text-muted)]">{{ ticket.key }}</span>
           <h1 class="text-2xl font-bold text-[var(--color-text)]">{{ ticket.title }}</h1>
         </div>
-        <a :href="ticket.url" target="_blank" class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] shrink-0 ml-4">Open in JIRA &#8599;</a>
+        <a :href="ticket.url" target="_blank" rel="noopener noreferrer" class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] shrink-0 ml-4">Open in JIRA &#8599;</a>
       </div>
 
       <!-- Description (JIRA returns rendered HTML) -->
       <div v-if="ticket.description" class="mb-8 p-4 rounded bg-[var(--color-surface)] border border-[var(--color-border)]">
-        <div class="markdown-content" v-html="ticket.description"></div>
+        <div class="markdown-content" v-html="DOMPurify.sanitize(ticket.description)"></div>
       </div>
 
       <!-- Subtasks -->
@@ -63,7 +70,7 @@ onMounted(async () => {
           <div v-for="comment in ticket.comments" :key="comment.id" class="p-4 rounded bg-[var(--color-surface)] border border-[var(--color-border)]">
             <div class="flex items-center gap-2 mb-2">
               <span class="font-medium text-[var(--color-text)]">{{ comment.author }}</span>
-              <span class="text-xs text-[var(--color-text-muted)] ml-auto">{{ new Date(comment.created_at).toLocaleString() }}</span>
+              <span class="text-xs text-[var(--color-text-muted)] ml-auto">{{ new Date(comment.createdAt).toLocaleString() }}</span>
             </div>
             <MarkdownContent :content="comment.body" />
           </div>

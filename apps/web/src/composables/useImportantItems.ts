@@ -5,31 +5,30 @@ import type { ImportantRules, PinnedItem } from '@/types/dashboard'
 import { getItemId } from '@/types/dashboard'
 
 /** Check if an item matches any importance rule */
-function matchesRules(itemType: string, item: any, rules: ImportantRules): boolean {
+function matchesRules(itemType: string, item: any, rules: ImportantRules, now: number): boolean {
   switch (itemType) {
     case 'github_pr':
-      if (rules.github_action_required && item.action_required) return true
-      if (rules.github_new_comments && item.has_new_comments) return true
-      if (rules.github_new_commits && item.has_new_commits) return true
-      if (rules.github_changes_requested && item.review_decision === 'changes_requested') return true
+      if (rules.githubActionRequired && item.actionRequired) return true
+      if (rules.githubNewComments && item.hasNewComments) return true
+      if (rules.githubNewCommits && item.hasNewCommits) return true
+      if (rules.githubChangesRequested && item.reviewDecision === 'changes_requested') return true
       return false
     case 'gitlab_mr':
-      if (rules.gitlab_mr_new_comments && item.has_new_comments) return true
-      if (rules.gitlab_mr_new_commits && item.has_new_commits) return true
+      if (rules.gitlabMrNewComments && item.hasNewComments) return true
+      if (rules.gitlabMrNewCommits && item.hasNewCommits) return true
       return false
     case 'gitlab_pipeline':
-      if (rules.gitlab_pipeline_failed && item.status === 'failed') return true
+      if (rules.gitlabPipelineFailed && item.status === 'failed') return true
       return false
     case 'jira_ticket':
-      if (rules.jira_high_priority) {
+      if (rules.jiraHighPriority) {
         const p = item.priority?.toLowerCase()
         if (p === 'highest' || p === 'high' || p === 'critical') return true
       }
       return false
     case 'calendar_event':
-      if (rules.calendar_starting_soon) {
-        const start = new Date(item.start_time).getTime()
-        const now = Date.now()
+      if (rules.calendarStartingSoon) {
+        const start = new Date(item.startTime).getTime()
         const diffMin = (start - now) / 60000
         if (diffMin >= 0 && diffMin <= 15) return true
       }
@@ -42,7 +41,7 @@ function matchesRules(itemType: string, item: any, rules: ImportantRules): boole
 /** Check if an item is manually pinned */
 function isPinned(itemType: string, item: any, pinnedItems: PinnedItem[]): boolean {
   const itemId = getItemId(itemType, item)
-  return pinnedItems.some((p) => p.item_type === itemType && p.item_id === itemId)
+  return pinnedItems.some((p) => p.itemType === itemType && p.itemId === itemId)
 }
 
 export interface ImportantSplit<T = any> {
@@ -58,14 +57,15 @@ export function useImportantItems(
   items: Ref<any[]>,
   itemType: string,
   rules: Ref<ImportantRules>,
-  pinnedItems: Ref<PinnedItem[]>
+  pinnedItems: Ref<PinnedItem[]>,
+  now: Ref<number>
 ) {
   return computed<ImportantSplit>(() => {
     const important: any[] = []
     const rest: any[] = []
 
     for (const item of items.value) {
-      if (matchesRules(itemType, item, rules.value) || isPinned(itemType, item, pinnedItems.value)) {
+      if (matchesRules(itemType, item, rules.value, now.value) || isPinned(itemType, item, pinnedItems.value)) {
         important.push(item)
       } else {
         rest.push(item)
@@ -83,7 +83,8 @@ export function useImportantItems(
 export function useImportantItemsAll(
   items: Ref<Array<{ type: string; data: any }>>,
   rules: Ref<ImportantRules>,
-  pinnedItems: Ref<PinnedItem[]>
+  pinnedItems: Ref<PinnedItem[]>,
+  now: Ref<number>
 ) {
   return computed(() => {
     const important: Array<{ type: string; data: any }> = []
@@ -91,7 +92,7 @@ export function useImportantItemsAll(
 
     for (const item of items.value) {
       if (
-        matchesRules(item.type, item.data, rules.value) ||
+        matchesRules(item.type, item.data, rules.value, now.value) ||
         isPinned(item.type, item.data, pinnedItems.value)
       ) {
         important.push(item)

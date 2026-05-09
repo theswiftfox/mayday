@@ -8,6 +8,9 @@ pub enum AppError {
     #[error("Integration not configured: {0}")]
     NotConfigured(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("External API error: {0}")]
     ExternalApi(String),
 
@@ -27,14 +30,21 @@ impl axum::response::IntoResponse for AppError {
             AppError::NotConfigured(msg) => {
                 (StatusCode::BAD_REQUEST, "not_configured", msg.clone())
             }
+            AppError::Validation(msg) => {
+                (StatusCode::BAD_REQUEST, "validation_error", msg.clone())
+            }
             AppError::ExternalApi(msg) => {
-                (StatusCode::BAD_GATEWAY, "external_api_error", msg.clone())
+                tracing::error!(error = %msg, "External API error");
+                (StatusCode::BAD_GATEWAY, "external_api_error", "An external service request failed".to_string())
             }
             AppError::Request(e) => {
-                (StatusCode::BAD_GATEWAY, "request_failed", e.to_string())
+                tracing::error!(error = %e, "External request failed");
+                (StatusCode::BAD_GATEWAY, "request_failed", "An external service request failed".to_string())
             }
             AppError::Internal(e) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", e.to_string())
+                // Log the real error but return a generic message to the client
+                tracing::error!(error = %e, "Internal server error");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "An internal error occurred".to_string())
             }
         };
 

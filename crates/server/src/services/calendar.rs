@@ -11,8 +11,10 @@ use sha2::{Digest, Sha256};
 
 use crate::config::{CalendarConfig, DEFAULT_MS_CLIENT_ID};
 use crate::error::{AppError, AppResult};
+use crate::state::AppState;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CalendarEvent {
     pub id: String,
     pub subject: String,
@@ -57,7 +59,7 @@ async fn fetch_todays_events_ics(
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("Calendar ICS fetch: {}", e)))?
+        .map_err(|e| AppError::ExternalApi(format!("Calendar ICS fetch: {e}")))?
         .text()
         .await?;
 
@@ -88,12 +90,12 @@ async fn fetch_todays_events_microsoft(
             ("$orderby", "start/dateTime"),
             ("$top", "50"),
         ])
-        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Authorization", format!("Bearer {access_token}"))
         .header("Prefer", "outlook.timezone=\"UTC\"")
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| AppError::ExternalApi(format!("Microsoft Graph: {}", e)))?;
+        .map_err(|e| AppError::ExternalApi(format!("Microsoft Graph: {e}")))?;
 
     let body: Value = resp.json().await?;
     let empty = vec![];
@@ -161,13 +163,12 @@ async fn get_ms_access_token(client: &Client, config: &CalendarConfig) -> AppRes
     let use_v1 = config
         .ms_redirect_uri
         .as_deref()
-        .map(|uri| is_v1_flow(uri))
+        .map(is_v1_flow)
         .unwrap_or(false);
 
     let resp = if use_v1 {
         let url = format!(
-            "https://login.microsoftonline.com/{}/oauth2/token",
-            tenant
+            "https://login.microsoftonline.com/{tenant}/oauth2/token"
         );
         let resource = resource_for_source(&config.source);
         client
@@ -181,11 +182,10 @@ async fn get_ms_access_token(client: &Client, config: &CalendarConfig) -> AppRes
             .send()
             .await?
             .error_for_status()
-            .map_err(|e| AppError::ExternalApi(format!("Microsoft OAuth v1.0 refresh: {}", e)))?
+            .map_err(|e| AppError::ExternalApi(format!("Microsoft OAuth v1.0 refresh: {e}")))?
     } else {
         let url = format!(
-            "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-            tenant
+            "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
         );
         let scope = scopes_for_source(&config.source);
         client
@@ -199,7 +199,7 @@ async fn get_ms_access_token(client: &Client, config: &CalendarConfig) -> AppRes
             .send()
             .await?
             .error_for_status()
-            .map_err(|e| AppError::ExternalApi(format!("Microsoft OAuth refresh: {}", e)))?
+            .map_err(|e| AppError::ExternalApi(format!("Microsoft OAuth refresh: {e}")))?
     };
 
     let body: Value = resp.json().await?;
@@ -240,10 +240,101 @@ pub fn is_v1_flow(redirect_uri: &str) -> bool {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: u64,
+}
+
+/// Extract an authorization code from various input formats:
+/// - Raw code string (e.g. "M.C507_SN1.2.U.abc...")
+/// - Full HTTP URL with ?code= query param
+/// - OOB URN: urn:ietf:wg:oauth:2.0:oob?code=...
+pub fn extract_auth_code(input: &str) -> String {
+    let trimmed = input.trim();
+
+    // Handle HTTP(S) URLs
+    if trimmed.starts_with("http") {
+        if let Ok(u) = url::Url::parse(trimmed) {
+            if let Some((_, v)) = u.query_pairs().find(|(k, _)| k == "code") {
+                return v.to_string();
+            }
+        }
+        return trimmed.to_string();
+    }
+
+    // Handle urn:ietf:wg:oauth:2.0:oob?code=...&session_state=...
+    if trimmed.starts_with("urn:") {
+        if let Some(query_start) = trimmed.find('?') {
+            let query = &trimmed[query_start + 1..];
+            for pair in query.split('&') {
+                if let Some(value) = pair.strip_prefix("code=") {
+                    return value.to_string();
+                }
+            }
+        }
+        return trimmed.to_string();
+    }
+
+    // Raw code
+    trimmed.to_string()
+}
+
+/// Exchange an authorization code for tokens using v2.0 endpoint with optional PKCE.
+/// This is the shared implementation used by both routes and Tauri commands.
+pub async fn exchange_code_v2(
+    client: &Client,
+    config: &CalendarConfig,
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: Option<&str>,
+) -> AppResult<TokenResponse> {
+    let client_id = config
+        .ms_client_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_MS_CLIENT_ID);
+
+    let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
+    let scope = scopes_for_source(&config.source);
+
+    let url = format!(
+        "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    );
+
+    let mut params: Vec<(&str, &str)> = vec![
+        ("grant_type", "authorization_code"),
+        ("client_id", client_id),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("scope", scope),
+    ];
+
+    if let Some(verifier) = code_verifier {
+        params.push(("code_verifier", verifier));
+    }
+
+    let resp = client.post(&url).form(&params).send().await?;
+    let body: Value = resp.json().await?;
+
+    if let Some(error) = body["error"].as_str() {
+        let desc = body["error_description"]
+            .as_str()
+            .unwrap_or("Unknown error");
+        return Err(AppError::ExternalApi(format!(
+            "Token exchange failed: {error} - {desc}"
+        )));
+    }
+
+    Ok(TokenResponse {
+        access_token: body["access_token"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        refresh_token: body["refresh_token"].as_str().map(String::from),
+        expires_in: body["expires_in"].as_u64().unwrap_or(3600),
+    })
 }
 
 // ─── PKCE Helpers ────────────────────────────────────────────────────────────
@@ -265,7 +356,7 @@ fn pkce_challenge(verifier: &str) -> String {
 /// Build the Microsoft authorization URL for the browser redirect (with PKCE)
 /// Always uses localhost callback — ignores ms_redirect_uri (that's for manual flow only)
 pub fn build_auth_url(config: &CalendarConfig, redirect_base: &str, code_verifier: &str) -> String {
-    let redirect_uri = format!("{}{}", redirect_base, REDIRECT_PATH);
+    let redirect_uri = format!("{redirect_base}{REDIRECT_PATH}");
     build_auth_url_with_redirect(config, &redirect_uri, code_verifier)
 }
 
@@ -335,8 +426,7 @@ pub async fn exchange_auth_code_v1(
     let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
     let resource = resource_for_source(&config.source);
     let url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/token",
-        tenant
+        "https://login.microsoftonline.com/{tenant}/oauth2/token"
     );
 
     let resp = client
@@ -358,8 +448,7 @@ pub async fn exchange_auth_code_v1(
             .as_str()
             .unwrap_or("Unknown error");
         return Err(AppError::ExternalApi(format!(
-            "Microsoft OAuth v1.0 error: {} - {}",
-            error, desc
+            "Microsoft OAuth v1.0 error: {error} - {desc}"
         )));
     }
 
@@ -398,10 +487,9 @@ pub async fn exchange_auth_code(
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(String::from)
-        .unwrap_or_else(|| format!("{}{}", redirect_base, REDIRECT_PATH));
+        .unwrap_or_else(|| format!("{redirect_base}{REDIRECT_PATH}"));
     let url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-        tenant
+        "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
     );
     let scope = scopes_for_source(&config.source);
 
@@ -425,8 +513,7 @@ pub async fn exchange_auth_code(
             .as_str()
             .unwrap_or("Unknown error");
         return Err(AppError::ExternalApi(format!(
-            "Microsoft OAuth error: {} - {}",
-            error, desc
+            "Microsoft OAuth error: {error} - {desc}"
         )));
     }
 
@@ -444,6 +531,7 @@ pub async fn exchange_auth_code(
 // ─── Device Code Flow ────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceCodeResponse {
     pub device_code: String,
     pub user_code: String,
@@ -453,6 +541,7 @@ pub struct DeviceCodeResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceCodePollResult {
     pub status: String, // "pending", "completed", "expired", "error"
     pub error: Option<String>,
@@ -474,8 +563,7 @@ pub async fn start_device_code_flow(
     let scope = scopes_for_source(&config.source);
 
     let url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/devicecode",
-        tenant
+        "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode"
     );
 
     let resp = client
@@ -491,8 +579,7 @@ pub async fn start_device_code_flow(
             .as_str()
             .unwrap_or("Unknown error");
         return Err(AppError::ExternalApi(format!(
-            "Device code request failed: {} - {}",
-            error, desc
+            "Device code request failed: {error} - {desc}"
         )));
     }
 
@@ -537,8 +624,7 @@ pub async fn poll_device_code_flow(
 
     let tenant = config.ms_tenant_id.as_deref().unwrap_or("common");
     let url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-        tenant
+        "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
     );
 
     let resp = client
@@ -577,7 +663,7 @@ pub async fn poll_device_code_flow(
                     .unwrap_or("Unknown error");
                 Ok(DeviceCodePollResult {
                     status: "error".to_string(),
-                    error: Some(format!("{}: {}", error, desc)),
+                    error: Some(format!("{error}: {desc}")),
                     token: None,
                 })
             }
@@ -621,7 +707,7 @@ async fn fetch_todays_events_ews(
 
     let resp = client
         .post(ews_url)
-        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Authorization", format!("Bearer {access_token}"))
         .header("Content-Type", "text/xml; charset=utf-8")
         .body(soap_body)
         .send()
@@ -668,14 +754,13 @@ fn build_ews_find_item_request(start: &str, end: &str) -> String {
           <t:FieldURI FieldURI="calendar:OnlineMeetingSettings" />
         </t:AdditionalProperties>
       </m:ItemShape>
-      <m:CalendarView MaxEntriesReturned="50" StartDate="{}" EndDate="{}" />
+      <m:CalendarView MaxEntriesReturned="50" StartDate="{start}" EndDate="{end}" />
       <m:ParentFolderIds>
         <t:DistinguishedFolderId Id="calendar" />
       </m:ParentFolderIds>
     </m:FindItem>
   </soap:Body>
-</soap:Envelope>"#,
-        start, end
+</soap:Envelope>"#
     )
 }
 
@@ -828,8 +913,7 @@ fn parse_ews_find_item_response(xml: &str) -> AppResult<Vec<CalendarEvent>> {
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(AppError::ExternalApi(format!(
-                    "EWS XML parse error: {}",
-                    e
+                    "EWS XML parse error: {e}"
                 )));
             }
             _ => {}
@@ -843,14 +927,14 @@ fn parse_ews_find_item_response(xml: &str) -> AppResult<Vec<CalendarEvent>> {
             let after = &xml[start + 15..];
             if let Some(end) = after.find("</m:MessageText>") {
                 let msg = &after[..end];
-                return Err(AppError::ExternalApi(format!("EWS error: {}", msg)));
+                return Err(AppError::ExternalApi(format!("EWS error: {msg}")));
             }
         }
         if let Some(start) = xml.find("<faultstring>") {
             let after = &xml[start + 13..];
             if let Some(end) = after.find("</faultstring>") {
                 let msg = &after[..end];
-                return Err(AppError::ExternalApi(format!("EWS SOAP fault: {}", msg)));
+                return Err(AppError::ExternalApi(format!("EWS SOAP fault: {msg}")));
             }
         }
     }
@@ -942,8 +1026,8 @@ fn build_event_from_props(
         return None;
     }
 
-    let location = get("LOCATION").map(|s| unescape_ics(s));
-    let description = get("DESCRIPTION").map(|s| unescape_ics(s));
+    let location = get("LOCATION").map(unescape_ics);
+    let description = get("DESCRIPTION").map(unescape_ics);
     let online_url = detect_meeting_url(
         location.as_deref(),
         description.as_deref(),
@@ -1075,7 +1159,7 @@ fn parse_organizer(raw: &str) -> String {
     if let Some(cn_start) = raw.find("CN=") {
         let after_cn = &raw[cn_start + 3..];
         let end = after_cn
-            .find(|c: char| c == ':' || c == ';')
+            .find([':', ';'])
             .unwrap_or(after_cn.len());
         let name = &after_cn[..end];
         if !name.is_empty() {
@@ -1088,4 +1172,23 @@ fn parse_organizer(raw: &str) -> String {
     }
 
     raw.to_string()
+}
+
+// ─── Token Persistence ───────────────────────────────────────────────────────
+
+/// Save a refresh token to the calendar config, persist to disk, and invalidate API cache.
+/// Callers handle their own cache invalidation (PKCE verifiers / device codes) before calling.
+pub async fn save_refresh_token(
+    state: &AppState,
+    refresh_token: Option<String>,
+) -> anyhow::Result<()> {
+    {
+        let mut config = state.config.write().await;
+        if let Some(cal) = config.calendar.as_mut() {
+            cal.ms_refresh_token = refresh_token;
+        }
+    }
+    state.save_config().await?;
+    state.api_cache.invalidate_all();
+    Ok(())
 }

@@ -5,9 +5,10 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
+use crate::responses::DataResponse;
 use crate::services;
 use crate::state::AppState;
 
@@ -30,7 +31,8 @@ async fn list_tickets(State(state): State<AppState>) -> AppResult<Json<Value>> {
         .ok_or_else(|| AppError::NotConfigured("jira".to_string()))?;
 
     let tickets = services::jira::fetch_tickets(&state.http_client, jira_config).await?;
-    let response = json!({ "data": tickets });
+    let response =
+        serde_json::to_value(DataResponse { data: &tickets }).map_err(|e| AppError::Internal(e.into()))?;
     state.api_cache.insert(cache_key, response.clone()).await;
     Ok(Json(response))
 }
@@ -39,6 +41,14 @@ async fn get_ticket_detail(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> AppResult<Json<Value>> {
+    // Validate ticket key format (e.g., PROJ-123)
+    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        || key.is_empty()
+        || key.len() > 50
+    {
+        return Err(AppError::Validation("Invalid ticket key format".to_string()));
+    }
+
     let config = state.config.read().await;
     let jira_config = config
         .jira
@@ -46,5 +56,7 @@ async fn get_ticket_detail(
         .ok_or_else(|| AppError::NotConfigured("jira".to_string()))?;
 
     let detail = services::jira::fetch_ticket_detail(&state.http_client, jira_config, &key).await?;
-    Ok(Json(json!({ "data": detail })))
+    Ok(Json(
+        serde_json::to_value(DataResponse { data: &detail }).map_err(|e| AppError::Internal(e.into()))?,
+    ))
 }

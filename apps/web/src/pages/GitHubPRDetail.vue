@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Elena Gantner -->
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '@/lib/api'
 import MarkdownContent from '@/components/MarkdownContent.vue'
@@ -14,17 +14,23 @@ const loading = ref(true)
 const error = ref('')
 const showResolved = ref(false)
 
-onMounted(async () => {
-  try {
-    const { owner, repo, number } = route.params as { owner: string; repo: string; number: string }
-    const { data } = await api.getGitHubPRDetail(owner, repo, Number(number))
-    pr.value = data
-  } catch (e: any) {
-    error.value = e.message || 'Failed to load PR details'
-  } finally {
-    loading.value = false
-  }
-})
+watch(
+  () => route.params,
+  async (params) => {
+    loading.value = true
+    error.value = ''
+    try {
+      const { owner, repo, number } = params as { owner: string; repo: string; number: string }
+      const { data } = await api.getGitHubPRDetail(owner, repo, Number(number))
+      pr.value = data
+    } catch (e: any) {
+      error.value = e.message || 'Failed to load PR details'
+    } finally {
+      loading.value = false
+    }
+  },
+  { immediate: true }
+)
 
 // Build a unified timeline: reviews + issue comments + review threads, sorted by date
 const timeline = computed(() => {
@@ -42,26 +48,26 @@ const timeline = computed(() => {
     if (review.state === 'COMMENTED' && !review.body) continue
     items.push({
       type: 'review',
-      date: review.submitted_at,
+      date: review.submittedAt,
       data: review,
     })
   }
 
   // Issue comments (top-level conversation)
-  for (const comment of pr.value.issue_comments || []) {
+  for (const comment of pr.value.issueComments || []) {
     items.push({
       type: 'issue_comment',
-      date: comment.created_at,
+      date: comment.createdAt,
       data: comment,
     })
   }
 
   // Review threads (code review discussions)
-  for (const thread of pr.value.review_threads || []) {
+  for (const thread of pr.value.reviewThreads || []) {
     const firstComment = thread.comments?.[0]
     items.push({
       type: 'review_thread',
-      date: firstComment?.created_at || '',
+      date: firstComment?.createdAt || '',
       data: thread,
     })
   }
@@ -73,12 +79,12 @@ const timeline = computed(() => {
 const visibleTimeline = computed(() => {
   if (showResolved.value) return timeline.value
   return timeline.value.filter(
-    (item) => item.type !== 'review_thread' || !item.data.is_resolved
+    (item) => item.type !== 'review_thread' || !item.data.isResolved
   )
 })
 
 const resolvedCount = computed(() =>
-  (pr.value?.review_threads || []).filter((t: any) => t.is_resolved).length
+  (pr.value?.reviewThreads || []).filter((t: any) => t.isResolved).length
 )
 
 function toThreadComments(thread: any): ThreadComment[] {
@@ -86,7 +92,7 @@ function toThreadComments(thread: any): ThreadComment[] {
     id: c.id,
     author: c.author,
     body: c.body,
-    created_at: c.created_at,
+    createdAt: c.createdAt,
   }))
 }
 
@@ -116,7 +122,7 @@ function formatDate(iso: string): string {
     <div v-else-if="pr">
       <div class="flex items-start justify-between mb-6">
         <h1 class="text-2xl font-bold text-[var(--color-text)]">{{ pr.title }}</h1>
-        <a :href="pr.url" target="_blank" class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] shrink-0 ml-4">Open in GitHub &#8599;</a>
+        <a :href="pr.url" target="_blank" rel="noopener noreferrer" class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] shrink-0 ml-4">Open in GitHub &#8599;</a>
       </div>
 
       <!-- PR Body -->
@@ -146,7 +152,7 @@ function formatDate(iso: string): string {
               <span class="text-xs px-2 py-0.5 rounded" :class="reviewStateClass(item.data.state)">
                 {{ item.data.state.replace('_', ' ') }}
               </span>
-              <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(item.data.submitted_at) }}</span>
+              <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(item.data.submittedAt) }}</span>
             </div>
             <MarkdownContent v-if="item.data.body" :content="item.data.body" />
           </div>
@@ -158,7 +164,7 @@ function formatDate(iso: string): string {
           >
             <div class="flex items-center gap-2 mb-2">
               <span class="text-sm font-medium" style="color: var(--color-text)">{{ item.data.author }}</span>
-              <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(item.data.created_at) }}</span>
+              <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(item.data.createdAt) }}</span>
             </div>
             <MarkdownContent :content="item.data.body" />
           </div>
@@ -167,8 +173,8 @@ function formatDate(iso: string): string {
           <CommentThread
             v-else-if="item.type === 'review_thread'"
             :comments="toThreadComments(item.data)"
-            :resolved="item.data.is_resolved"
-            :outdated="item.data.is_outdated"
+            :resolved="item.data.isResolved"
+            :outdated="item.data.isOutdated"
             :path="item.data.path"
             :line="item.data.line"
           />

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Elena Gantner -->
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '@/lib/api'
 import MarkdownContent from '@/components/MarkdownContent.vue'
@@ -15,29 +15,35 @@ const error = ref('')
 const showSystemNotes = ref(false)
 const showResolved = ref(false)
 
-onMounted(async () => {
-  try {
-    const { projectId, iid } = route.params as { projectId: string; iid: string }
-    const { data } = await api.getGitLabMRDetail(Number(projectId), Number(iid))
-    mr.value = data
-  } catch (e: any) {
-    error.value = e.message || 'Failed to load MR details'
-  } finally {
-    loading.value = false
-  }
-})
+watch(
+  () => route.params,
+  async (params) => {
+    loading.value = true
+    error.value = ''
+    try {
+      const { projectId, iid } = params as { projectId: string; iid: string }
+      const { data } = await api.getGitLabMRDetail(Number(projectId), Number(iid))
+      mr.value = data
+    } catch (e: any) {
+      error.value = e.message || 'Failed to load MR details'
+    } finally {
+      loading.value = false
+    }
+  },
+  { immediate: true }
+)
 
 // Transform discussions into a list for display
 const discussions = computed(() => {
   if (!mr.value?.discussions) return []
   return mr.value.discussions as Array<{
     id: string
-    individual_note: boolean
+    individualNote: boolean
     notes: Array<{
       id: number
       author: string
       body: string
-      created_at: string
+      createdAt: string
       system: boolean
       resolvable: boolean
       resolved: boolean
@@ -79,7 +85,7 @@ function toThreadComments(notes: any[]): ThreadComment[] {
     id: n.id,
     author: n.author,
     body: n.body,
-    created_at: n.created_at,
+    createdAt: n.createdAt,
     tag: n.system ? 'system' : undefined,
   }))
 }
@@ -99,7 +105,7 @@ function formatDate(iso: string): string {
     <div v-else-if="mr">
       <div class="flex items-start justify-between mb-6">
         <h1 class="text-2xl font-bold text-[var(--color-text)]">{{ mr.title }}</h1>
-        <a :href="mr.url" target="_blank" class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] shrink-0 ml-4">Open in GitLab &#8599;</a>
+        <a :href="mr.url" target="_blank" rel="noopener noreferrer" class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] shrink-0 ml-4">Open in GitLab &#8599;</a>
       </div>
 
       <!-- Pipeline status -->
@@ -140,7 +146,7 @@ function formatDate(iso: string): string {
         <template v-for="discussion in filteredDiscussions" :key="discussion.id">
           <!-- Single note (individual_note = true): render as a simple comment -->
           <div
-            v-if="discussion.individual_note && discussion.notes.length === 1"
+            v-if="discussion.individualNote && discussion.notes.length === 1"
             class="p-4 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]"
           >
             <div class="flex items-center gap-2 mb-2">
@@ -149,7 +155,7 @@ function formatDate(iso: string): string {
                 v-if="discussion.notes[0].system"
                 class="text-xs px-2 py-0.5 rounded bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]"
               >system</span>
-              <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(discussion.notes[0].created_at) }}</span>
+              <span class="text-xs ml-auto" style="color: var(--color-text-muted)">{{ formatDate(discussion.notes[0].createdAt) }}</span>
             </div>
             <MarkdownContent :content="discussion.notes[0].body" />
           </div>

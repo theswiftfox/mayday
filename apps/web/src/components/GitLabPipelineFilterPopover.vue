@@ -7,7 +7,7 @@ import FilterPopover from './FilterPopover.vue'
 import { hasActiveFilter } from '@/composables/useFilteredItems'
 
 const prefs = useDashboardPrefsStore()
-const filter = computed(() => prefs.filters.gitlab_pipeline)
+const filter = computed(() => prefs.filters.gitlabPipeline)
 const active = computed(() => hasActiveFilter('gitlab_pipeline', prefs.filters))
 
 const allStatuses = ['failed', 'running', 'pending', 'canceled']

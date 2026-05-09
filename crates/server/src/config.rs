@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for all integrations
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub github: Option<GitHubConfig>,
     pub jira: Option<JiraConfig>,
@@ -16,18 +17,20 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubConfig {
     #[serde(default)]
     pub token: String,
     pub username: String,
     #[serde(default)]
     pub repos: Vec<String>, // optional filter: "org/repo" format
-    #[serde(default = "default_poll_interval")]
+    #[serde(default = "default_poll_interval", alias = "poll_interval_secs")]
     pub poll_interval_secs: u64,
     /// OAuth client ID for device code flow (optional - if not set, uses token directly)
+    #[serde(alias = "oauth_client_id")]
     pub oauth_client_id: Option<String>,
     /// How the token was obtained: "manual", "gh_cli", or "device_code"
-    #[serde(default = "default_token_source")]
+    #[serde(default = "default_token_source", alias = "token_source")]
     pub token_source: String,
 }
 
@@ -36,17 +39,20 @@ fn default_token_source() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JiraConfig {
     pub host: String, // e.g., yourcompany.atlassian.net
     pub email: String,
+    #[serde(alias = "api_token")]
     pub api_token: String,
-    #[serde(default)]
+    #[serde(default, alias = "project_keys")]
     pub project_keys: Vec<String>,
-    #[serde(default = "default_poll_interval")]
+    #[serde(default = "default_poll_interval", alias = "poll_interval_secs")]
     pub poll_interval_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabConfig {
     pub host: String, // e.g., gitlab.com
     pub token: String,
@@ -54,7 +60,7 @@ pub struct GitLabConfig {
     /// Projects to monitor — stores both numeric ID (for API calls) and path (for display)
     #[serde(default)]
     pub projects: Vec<GitLabProject>,
-    #[serde(default = "default_poll_interval")]
+    #[serde(default = "default_poll_interval", alias = "poll_interval_secs")]
     pub poll_interval_secs: u64,
 }
 
@@ -66,29 +72,37 @@ impl GitLabConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabProject {
     pub id: u64,
     pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CalendarConfig {
     /// "ics", "microsoft", or "ews"
     #[serde(default = "default_calendar_source")]
     pub source: String,
     /// ICS feed URL (used when source = "ics")
+    #[serde(alias = "ics_url")]
     pub ics_url: Option<String>,
     /// Microsoft OAuth client ID (defaults to Azure CLI public client)
+    #[serde(alias = "ms_client_id")]
     pub ms_client_id: Option<String>,
     /// Microsoft tenant ID (defaults to "common")
+    #[serde(alias = "ms_tenant_id")]
     pub ms_tenant_id: Option<String>,
     /// OAuth refresh token (persisted after auth flow)
+    #[serde(alias = "ms_refresh_token")]
     pub ms_refresh_token: Option<String>,
     /// EWS endpoint URL (defaults to Exchange Online)
+    #[serde(alias = "ews_url")]
     pub ews_url: Option<String>,
     /// Custom OAuth redirect URI (optional — overrides the default localhost callback)
+    #[serde(alias = "ms_redirect_uri")]
     pub ms_redirect_uri: Option<String>,
-    #[serde(default = "default_poll_interval")]
+    #[serde(default = "default_poll_interval", alias = "poll_interval_secs")]
     pub poll_interval_secs: u64,
 }
 
@@ -100,8 +114,9 @@ fn default_calendar_source() -> String {
 pub const DEFAULT_MS_CLIENT_ID: &str = "04b07795-8ddb-461a-bbcf-e7f2f0e4a92c";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GeneralConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "refresh_on_focus")]
     pub refresh_on_focus: bool,
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -118,21 +133,22 @@ impl Default for GeneralConfig {
 
 /// Dashboard layout and filter preferences
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardConfig {
     /// Section display order (e.g. ["important", "github_pr", "gitlab_mr", ...])
-    #[serde(default = "default_section_order")]
+    #[serde(default = "default_section_order", alias = "section_order")]
     pub section_order: Vec<String>,
     /// Which sections are visible. Empty = all visible (default).
-    #[serde(default = "default_visible_sections")]
+    #[serde(default = "default_visible_sections", alias = "visible_sections")]
     pub visible_sections: Vec<String>,
     /// Calendar layout: "sidebar" (right column) or "inline" (regular section)
-    #[serde(default = "default_calendar_layout")]
+    #[serde(default = "default_calendar_layout", alias = "calendar_layout")]
     pub calendar_layout: String,
     /// Rules for auto-populating the Important section
-    #[serde(default)]
+    #[serde(default, alias = "important_rules")]
     pub important_rules: ImportantRules,
     /// Manually pinned items
-    #[serde(default)]
+    #[serde(default, alias = "pinned_items")]
     pub pinned_items: Vec<PinnedItem>,
     /// Per-integration filters
     #[serde(default)]
@@ -172,75 +188,83 @@ fn default_calendar_layout() -> String {
 
 /// Rules that determine which items automatically appear in the Important section
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportantRules {
-    #[serde(default)]
+    #[serde(default, alias = "github_action_required")]
     pub github_action_required: bool,
-    #[serde(default)]
+    #[serde(default, alias = "github_new_comments")]
     pub github_new_comments: bool,
-    #[serde(default)]
+    #[serde(default, alias = "github_new_commits")]
     pub github_new_commits: bool,
-    #[serde(default)]
+    #[serde(default, alias = "github_changes_requested")]
     pub github_changes_requested: bool,
-    #[serde(default)]
+    #[serde(default, alias = "gitlab_mr_new_comments")]
     pub gitlab_mr_new_comments: bool,
-    #[serde(default)]
+    #[serde(default, alias = "gitlab_mr_new_commits")]
     pub gitlab_mr_new_commits: bool,
-    #[serde(default)]
+    #[serde(default, alias = "gitlab_pipeline_failed")]
     pub gitlab_pipeline_failed: bool,
-    #[serde(default)]
+    #[serde(default, alias = "jira_high_priority")]
     pub jira_high_priority: bool,
-    #[serde(default)]
+    #[serde(default, alias = "calendar_starting_soon")]
     pub calendar_starting_soon: bool,
 }
 
 /// A manually pinned item
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PinnedItem {
     /// Item type: "github_pr", "gitlab_mr", "gitlab_pipeline", "jira_ticket", "calendar_event"
+    #[serde(alias = "item_type")]
     pub item_type: String,
     /// Unique identifier: "org/repo#123" for PRs, "project_id!iid" for MRs, "PROJ-123" for tickets, etc.
+    #[serde(alias = "item_id")]
     pub item_id: String,
 }
 
 /// Per-integration filter settings
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardFilters {
-    #[serde(default)]
+    #[serde(default, alias = "github_pr")]
     pub github_pr: GitHubPRFilter,
-    #[serde(default)]
+    #[serde(default, alias = "gitlab_mr")]
     pub gitlab_mr: GitLabMRFilter,
-    #[serde(default)]
+    #[serde(default, alias = "gitlab_pipeline")]
     pub gitlab_pipeline: GitLabPipelineFilter,
-    #[serde(default)]
+    #[serde(default, alias = "jira_ticket")]
     pub jira_ticket: JiraTicketFilter,
-    #[serde(default)]
+    #[serde(default, alias = "calendar_event")]
     pub calendar_event: CalendarEventFilter,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubPRFilter {
     /// Filter by role: ["author", "reviewer", "other"]. Empty = show all.
     #[serde(default)]
     pub roles: Vec<String>,
     /// Hide draft PRs
-    #[serde(default)]
+    #[serde(default, alias = "hide_drafts")]
     pub hide_drafts: bool,
     /// Only show PRs where action is required
-    #[serde(default)]
+    #[serde(default, alias = "action_required_only")]
     pub action_required_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabMRFilter {
     /// Filter by role: ["author", "reviewer"]. Empty = show all.
     #[serde(default)]
     pub roles: Vec<String>,
     /// Hide draft MRs
-    #[serde(default)]
+    #[serde(default, alias = "hide_drafts")]
     pub hide_drafts: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct GitLabPipelineFilter {
     /// Filter by status: ["failed", "running", "pending", ...]. Empty = show all non-success.
     #[serde(default)]
@@ -248,25 +272,27 @@ pub struct GitLabPipelineFilter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct JiraTicketFilter {
     /// Filter by status category: ["todo", "in_progress", "done"]. Empty = show all.
-    #[serde(default)]
+    #[serde(default, alias = "status_categories")]
     pub status_categories: Vec<String>,
     /// Filter by priority: ["highest", "high", "medium", "low", "lowest"]. Empty = show all.
     #[serde(default)]
     pub priorities: Vec<String>,
     /// Filter by issue type: ["story", "bug", "task", ...]. Empty = show all.
-    #[serde(default)]
+    #[serde(default, alias = "issue_types")]
     pub issue_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CalendarEventFilter {
     /// Hide all-day events
-    #[serde(default)]
+    #[serde(default, alias = "hide_all_day")]
     pub hide_all_day: bool,
     /// Only show online meetings
-    #[serde(default)]
+    #[serde(default, alias = "online_only")]
     pub online_only: bool,
 }
 
