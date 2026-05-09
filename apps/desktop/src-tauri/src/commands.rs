@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Elena Gantner
 //! Tauri IPC commands — thin wrappers around the myday-server service layer.
 //! These replace the HTTP route handlers when running as a Tauri desktop app.
 

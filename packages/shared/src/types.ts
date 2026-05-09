@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Elena Gantner
 // Integration source types
 export type IntegrationSource = 'github' | 'jira' | 'gitlab' | 'outlook';
 

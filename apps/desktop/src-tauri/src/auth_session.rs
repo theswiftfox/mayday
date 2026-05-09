@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Elena Gantner
 //! macOS ASWebAuthenticationSession wrapper.
 //!
 //! Uses the system authentication session which benefits from the Enterprise SSO
