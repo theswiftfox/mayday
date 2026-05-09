@@ -439,8 +439,8 @@ fn parse_gitlab_mr(mr: &Value, role: &str, config: &GitLabConfig) -> Option<GitL
         created_at: mr["created_at"].as_str().unwrap_or("").to_string(),
         updated_at: mr["updated_at"].as_str().unwrap_or("").to_string(),
         role: role.to_string(),
-        has_new_comments: false, // TODO: track based on last viewed
-        has_new_commits: false,  // TODO: track based on last viewed
+        has_new_comments: false, // TODO: implement similar to GitHub (compare comment dates to user's last activity)
+        has_new_commits: false,  // TODO: implement similar to GitHub (compare commit dates to user's last activity)
         comment_count: mr["user_notes_count"].as_u64().unwrap_or(0),
         labels: mr["labels"]
             .as_array()

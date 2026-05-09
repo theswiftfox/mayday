@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Elena Gantner
 //
-// API response types — mirrors the Rust Serialize structs from myday-server.
+// API response types — mirrors the Rust Serialize structs from myday-core.
 // Field names use camelCase to match the Rust `#[serde(rename_all = "camelCase")]`.
 
 export type ItemType = 'github_pr' | 'jira_ticket' | 'gitlab_mr' | 'gitlab_pipeline' | 'calendar_event'

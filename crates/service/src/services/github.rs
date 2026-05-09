@@ -140,7 +140,6 @@ pub async fn fetch_prs(client: &Client, config: &GitHubConfig) -> AppResult<Vec<
     Ok(all_prs)
 }
 
-/// Enrich a single PR with action_required by fetching commits and comments
 /// Find the authenticated user's latest commit date from a list of commits.
 fn find_my_last_commit_date(commits: &[Value], username: &str) -> Option<String> {
     commits
