@@ -38,7 +38,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            crates/server
+            crates/service
             apps/desktop/src-tauri
 
       - name: Install dependencies

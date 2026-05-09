@@ -103,11 +103,11 @@ export interface GitLabPipeline {
   duration?: number; // seconds
 }
 
-// Outlook types
+// Outlook types (Microsoft Graph, and EWS sources)
 export interface OutlookConfig extends IntegrationConfig {
   source: 'outlook';
-  clientId: string; // Azure AD app client ID
-  tenantId?: string; // optional, defaults to 'common'
+  clientId?: string; // Azure AD app client ID
+  tenantId?: string; // Azure AD tenant, defaults to 'common'
   refreshToken?: string; // stored after OAuth flow
 }
 
