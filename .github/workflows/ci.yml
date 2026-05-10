@@ -29,21 +29,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            crates/service
-            apps/desktop/src-tauri
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build web frontend
-        run: pnpm --filter @myday/web build
+        run: pnpm build:web
 
       - name: Check Rust compilation
         working-directory: apps/desktop/src-tauri
         run: cargo check
 
       - name: Build desktop app (no bundle)
-        working-directory: apps/desktop
-        run: pnpm tauri build --no-bundle
+        run: pnpm build:desktop --no-bundle
